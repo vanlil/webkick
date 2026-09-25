@@ -240,20 +240,25 @@ function stepHold(k, team, world, goal) {
 export function distribute(k, team, world, forceKick) {
   const { ball, rng, events } = world;
   const kp = tuning.keeper;
-  const target = pickTarget(k, team, world);
+  const throwTarget = forceKick ? null : pickTarget(k, team, world, false);
+  const throwIt = throwTarget && Math.hypot(throwTarget.x - ball.x, throwTarget.y - ball.y) < 28;
+  const target = throwIt ? throwTarget : pickTarget(k, team, world, true);
   const dx = target.x - ball.x;
   const dy = target.y - ball.y;
   const d = Math.hypot(dx, dy) || 1;
   let vh, vz;
-  if (d < 28 && !forceKick) {
+  if (throwIt) {
     // Throw: flat arc that lands at the team-mate.
     vh = Math.min(18, Math.max(10, d * 0.9));
     const T = d / vh;
     vz = (0.5 * tuning.ball.gravity * T * T - ball.z) / T;
     events.push({ type: 'throw' });
   } else {
-    vh = kp.kickSpeed * (0.85 + 0.15 * team.level.keeperSkill);
+    // Kick: a high arc whose length matches the distance to the team-mate (a little extra for
+    // air drag), never more than the keeper's kicking power.
     vz = kp.kickLift;
+    const T = (2 * vz) / tuning.ball.gravity;
+    vh = Math.min(kp.kickSpeed * (0.85 + 0.15 * team.level.keeperSkill), (d / T) * 1.12);
     events.push({ type: 'clearance' });
   }
   const err = rng.range(-0.05, 0.05);
@@ -290,24 +295,34 @@ function release(k, world, vx, vy, vz) {
   k.kickTimer = 0.2;
 }
 
-// Free team-mate, preferably 15–35 m away and not near an opponent.
-function pickTarget(k, team, world) {
+// Free team-mate, not near an opponent. Throws: 8–28 m, never backwards. Kicks: at least 15 m
+// up the pitch and at most ~55° off the forward direction, so a goal kick never goes out
+// sideways; if nobody fits, a long kick up the middle.
+function pickTarget(k, team, world, kick) {
   let best = null;
   let bestScore = -Infinity;
   const opponents = world.teams.find((t) => t.id !== team.id).players;
   for (const p of team.players) {
     if (p === k || p.sentOff) continue;
-    const d = Math.hypot(p.x - k.x, p.y - k.y);
-    if (d < 8) continue;
+    const dx = p.x - k.x, dy = p.y - k.y;
+    const d = Math.hypot(dx, dy);
+    const progress = dy * team.attackDir; // metres up the pitch
+    if (d < 8 || progress < 0) continue;
+    if (kick && (progress < 15 || progress < Math.abs(dx) * 0.7)) continue;
     let free = 12;
     for (const o of opponents) free = Math.min(free, Math.hypot(o.x - p.x, o.y - p.y));
-    const score = free * 1.2 - Math.abs(d - 25) * 0.25;
+    const score = kick
+      ? free * 1.2 + progress * 0.15 - Math.abs(p.x - PITCH.width / 2) * 0.05
+      : free * 1.2 - Math.abs(d - 18) * 0.25;
     if (score > bestScore) {
       bestScore = score;
       best = p;
     }
   }
-  return best || { x: PITCH.width / 2, y: PITCH.length / 2 };
+  if (best) return best;
+  return kick
+    ? { x: PITCH.width / 2 + (k.x - PITCH.width / 2) * 0.3, y: k.y + team.attackDir * 45 }
+    : null;
 }
 
 function moveTo(k, tx, ty, maxSpeed, accel) {

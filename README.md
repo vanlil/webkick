@@ -5,6 +5,10 @@ no build step, no backend.
 
 **Play it here: https://vanlil.github.io/webkick/**
 
+![Title screen with the main menu](docs/screenshots/title-menu.jpg)
+
+![A match: top-down players, radar map, score and clock](docs/screenshots/match.jpg)
+
 ## Run
 
 Serve the folder with any static web server (ES modules do not load from `file://`).

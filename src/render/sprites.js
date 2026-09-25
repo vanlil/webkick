@@ -15,6 +15,7 @@ const SHADOW_BASE = { x: 0.16, y: 0.12 }; // shadow offset of a player standing 
 // shoulder-wide from above) and lying players shorter, so both read well at the same zoom.
 const LYING_SCALE = 0.62;
 const STRIDE = 0.15; // how far the feet move forward and back while running (m)
+const SHOULDER_TURN = 0.21; // shoulders counter-rotate against the legs while running (rad, ≈ 12°)
 
 export function drawPlayer(ctx, view, p, x, y, { active = false } = {}) {
   const lying = p.state === 'slide' || p.state === 'fallen' || (p.state === 'down' && p.gettingUp) ||
@@ -92,19 +93,23 @@ function standingShapes(p) {
     shapes.push({ part: 'boots', type: 'ellipse', c: [foot[0] + 0.05, foot[1]], rx: 0.1, ry: 0.065 });
   }
   shapes.push({ part: 'shorts', type: 'ellipse', c: [-0.05, 0], rx: 0.11, ry: 0.19 });
-  // Arms swing opposite to the legs; a keeper holding the ball has both arms forward.
+  // Upper body: the shoulders turn against the legs while running (right leg forward →
+  // right shoulder back), the arms swing with them. Everything rotates round the body centre.
+  const running = speed > 0.3 && !kick && p.state !== 'trap';
+  const turn = running ? (swing / STRIDE) * SHOULDER_TURN : 0;
+  const r = (pt) => rotate(pt, turn);
   const holding = p.role === 'keeper' && p.state === 'hold';
   for (const side of [-1, 1]) {
-    const hand = holding ? [0.32, 0.13 * side] : [-swing * side * 0.8, 0.4 * side];
-    const shoulder = [0, 0.3 * side];
+    const hand = r(holding ? [0.32, 0.13 * side] : [-swing * side * 0.8, 0.4 * side]);
+    const shoulder = r([0, 0.3 * side]);
     shapes.push({ part: 'shirt', type: 'capsule', a: shoulder, b: mid(shoulder, hand), w: 0.105 });
     shapes.push({ part: 'skin', type: 'capsule', a: mid(shoulder, hand), b: hand, w: 0.08 });
     shapes.push({ part: 'skin', type: 'ellipse', c: hand, rx: 0.05, ry: 0.05 });
   }
   // Athletic torso from above: broad, flat shoulders with rounded deltoids, not an oval.
-  shapes.push({ part: 'shirt', type: 'capsule', a: [0, -0.24], b: [0, 0.24], w: 0.24, outline: true, stripes: true, span: 0.3 });
+  shapes.push({ part: 'shirt', type: 'capsule', a: r([0, -0.24]), b: r([0, 0.24]), w: 0.24, outline: true, stripes: true, span: 0.3, rot: turn });
   for (const side of [-1, 1]) {
-    shapes.push({ part: 'shirt', type: 'ellipse', c: [0.01, 0.27 * side], rx: 0.1, ry: 0.085 });
+    shapes.push({ part: 'shirt', type: 'ellipse', c: r([0.01, 0.27 * side]), rx: 0.1, ry: 0.085 });
   }
   // Head: mostly hair from above; a little face at the front.
   shapes.push({ part: 'hair', type: 'ellipse', c: [0.02, 0], rx: 0.125, ry: 0.11, outline: true });
@@ -162,6 +167,7 @@ function addShape(path, sh) {
 function drawStripes(ctx, path, sh, color) {
   ctx.save();
   ctx.clip(path);
+  ctx.rotate(sh.rot || 0); // stripes turn with the shoulders
   ctx.fillStyle = color;
   const half = sh.span || (sh.type === 'ellipse' ? sh.ry : sh.w / 2);
   for (const y of [-half * 0.55, 0, half * 0.55]) ctx.fillRect(-1, y - half * 0.13, 2, half * 0.26);
@@ -169,6 +175,7 @@ function drawStripes(ctx, path, sh, color) {
 }
 
 const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+const rotate = ([x, y], a) => [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
 
 export function drawBall(ctx, view, ball, x, y, z) {
   const s = view.scale;
