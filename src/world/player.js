@@ -1,4 +1,4 @@
-import { DT, PITCH, tuning } from '../config.js';
+import { DT, PITCH, tuning, currentSurface } from '../config.js';
 import { isAirborne } from './ball.js';
 
 const DIAG = Math.SQRT1_2;
@@ -170,8 +170,8 @@ function push(p, ball, world) {
   // referee sees it). A poke at the ball from a distance is fine.
   const q = ball.lastTouch;
   if (q && q.team !== p.team && q.role !== 'keeper' && q.state === 'run' &&
-      Math.hypot(q.x - ball.x, q.y - ball.y) < 1.0 && Math.hypot(q.x - p.x, q.y - p.y) < 0.8 &&
-      playerSpeed(p) > 3 && fromBehind(p, q)) {
+      Math.hypot(q.x - ball.x, q.y - ball.y) < 1.0 && Math.hypot(q.x - p.x, q.y - p.y) < 0.6 &&
+      playerSpeed(p) > 4.5 && fromBehind(p, q)) {
     q.state = 'fallen';
     q.stateTimer = cfg.fallTime * 0.7;
     q.vx = q.vy = 0;
@@ -242,8 +242,12 @@ export function bodyBlock(p, ball, world, hit = null) {
     ball.vy = p.vy + (relVy - 2 * vn * ny) * k;
     ball.vz *= 0.3;
     ball.spin = 0;
-    touched(p, ball, world);
-    if (-vn > 1.5) events.push({ type: 'block', strength: -vn }); // not for a ball just pinched
+    // Only once per touch cooldown, so a player next to a slow ball does not "touch" it every step.
+    if (p.touchTimer <= 0) {
+      touched(p, ball, world);
+      p.touchTimer = 0.1;
+      if (-vn > 1.5) events.push({ type: 'block', strength: -vn }); // not for a ball just pinched
+    }
   }
   // Push the ball out of the body smoothly: it gets at least the player's speed away from
   // him, and the position is corrected by at most a few centimetres per step.
@@ -370,6 +374,7 @@ function overheadKick(p, ball, dir, world) {
   kick(p, ball, dir, k.overheadSpeed, k.overheadLift, p.shooting, world, 'overhead');
   p.state = 'down';
   p.stateTimer = k.overheadTime;
+  p.gettingUp = true; // lands on his back: drawn lying
 }
 
 function stepDown(p) {
@@ -398,11 +403,18 @@ function opponentHasBall(p, ball) {
 // Is p coming at q from behind: both facing about the same way, and p within a 45° cone
 // behind q? (Side by side, shoulder to shoulder, is not "from behind".)
 export function fromBehind(p, q) {
-  const sameWay = p.fx * q.fx + p.fy * q.fy > 0.7;
+  const pd = heading(p), qd = heading(q);
+  const sameWay = pd.x * qd.x + pd.y * qd.y > 0.7;
   const dx = q.x - p.x, dy = q.y - p.y;
   const d = Math.hypot(dx, dy) || 1;
-  const behind = (dx * q.fx + dy * q.fy) / d > 0.7;
+  const behind = (dx * qd.x + dy * qd.y) / d > 0.7;
   return sameWay && behind;
+}
+
+// Direction of movement when running, otherwise the facing.
+function heading(p) {
+  const v = Math.hypot(p.vx, p.vy);
+  return v > 1 ? { x: p.vx / v, y: p.vy / v } : { x: p.fx, y: p.fy };
 }
 
 function startSlide(p, dir, world) {
@@ -482,7 +494,8 @@ function stepFallen(p) {
 
 // Kick the ball in direction `d` (unit vector). Skill (0..1) sets the random direction error.
 function kick(p, ball, d, speed, lift, skill, world, kind) {
-  const a = world.rng.range(-1, 1) * (1 - skill) * tuning.kick.maxError;
+  // Tired players are less accurate.
+  const a = world.rng.range(-1, 1) * ((1 - skill) + (1 - (p.stamina ?? 1)) * 0.5) * tuning.kick.maxError;
   const dx = d.x * Math.cos(a) - d.y * Math.sin(a);
   const dy = d.x * Math.sin(a) + d.y * Math.cos(a);
   launchBall(p, ball, dx * speed, dy * speed, lift, world, kind, true);
@@ -529,9 +542,25 @@ function applyAftertouch(p, dir, ball) {
   if (fwd > 0.9 && isAirborne(ball)) ball.vz -= k.dipRate * fade * DT;
 }
 
+// Stamina 1 → 0: a tired player is up to 15 % slower and less accurate (see kick()).
+export function fatigue(p) {
+  return 0.85 + 0.15 * (p.stamina ?? 1);
+}
+
+// Running costs stamina, more on heavy pitches (surface staminaMul) and for players with low
+// endurance; walking and standing recover a little. Scaled to the match length, so a player
+// who sprints all match ends at about 40 % in any match length.
+function tire(p, speed) {
+  if (p.stamina === undefined) return;
+  const matchSeconds = tuning.game.halfMinutes * 120;
+  const effort = speed / (tuning.player.maxSpeed * p.pace);
+  const drain = effort > 0.6 ? effort * effort * 0.6 * currentSurface().staminaMul * (1.3 - p.endurance) : -0.08;
+  p.stamina = Math.min(1, Math.max(0, p.stamina - (drain / matchSeconds) * DT * 1.6));
+}
+
 function move(p, dir) {
   const cfg = tuning.player;
-  const maxSpeed = cfg.maxSpeed * p.pace;
+  const maxSpeed = cfg.maxSpeed * p.pace * fatigue(p);
   let tx = 0, ty = 0, rate = cfg.decel;
   if (dir) {
     // Facing snaps to the stick at once: fast, responsive turning.
@@ -556,6 +585,7 @@ function move(p, dir) {
   p.x += p.vx * DT;
   p.y += p.vy * DT;
   p.runPhase += playerSpeed(p) * DT * 2.4;
+  tire(p, playerSpeed(p));
 }
 
 function keepInStadium(p) {

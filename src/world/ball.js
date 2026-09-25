@@ -30,6 +30,7 @@ export const GOALS = [
 ];
 const GOAL_X0 = PITCH.width / 2 - PITCH.goalWidth / 2;
 const GOAL_X1 = PITCH.width / 2 + PITCH.goalWidth / 2;
+const POSTS_X = [GOAL_X0, GOAL_X1];
 
 const MAX_SUBSTEP_DIST = 0.08; // metres per substep; keeps fast shots from passing through posts
 
@@ -123,7 +124,7 @@ function collideGoal(ball, goal, index, px, py, pz, events) {
 
   // Posts: vertical cylinders.
   if (ball.z < H + r) {
-    for (const postX of [GOAL_X0, GOAL_X1]) {
+    for (const postX of POSTS_X) {
       const dx = ball.x - postX;
       const dy = ball.y - goal.lineY;
       const d = Math.hypot(dx, dy);

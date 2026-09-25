@@ -13,7 +13,9 @@ const COLOR_NAMES = [
   'green', 'dark green', 'sky blue', 'blue', 'navy', 'purple', 'pink', 'brown',
 ];
 const ROLE_NAMES = { def: 'defender', mid: 'midfielder', fwd: 'forward' };
-const KEY_LABELS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', fire: 'Fire' };
+const KEY_LABELS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', fire: 'Fire', fire2: 'Fire (2nd key)' };
+// Keys with a fixed meaning; they cannot be used for movement or fire.
+const RESERVED = new Set(['Escape', 'KeyP', 'KeyX', 'KeyM', 'KeyG', 'KeyI', 'KeyL', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Enter', 'Tab']);
 
 export function createMenus(root, actions) {
   const titleEl = root.querySelector('.menu-title');
@@ -85,6 +87,7 @@ export function createMenus(root, actions) {
           choice('Pitch', PITCH_TYPE_NAMES, null, () => g.pitchType, (v) => { g.pitchType = v; }),
           choice('Grass pattern', ['diamonds', 'stripes', 'squares', 'plain'], null, () => g.grass, (v) => { g.grass = v; }),
           choice('Wind', Object.keys(WIND_LEVELS), null, () => g.wind, (v) => { g.wind = v; }),
+          choice('Wind blows to', [0, 45, 90, 135, 180, 225, 270, 315], ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'], () => g.windDirDeg, (v) => { g.windDirDeg = v; }),
           choice('Game speed', [1, 0.75, 0.5], ['normal', 'reduced', 'slow'], () => g.speed, (v) => { g.speed = v; }),
           onOff('Aftertouch', g, 'aftertouch'),
           onOff('Referee (fouls)', g, 'referee'),
@@ -266,10 +269,21 @@ export function createMenus(root, actions) {
     if (!isOpen()) return;
     if (capturing) {
       e.preventDefault();
-      if (e.code !== 'Escape') {
-        tuning.keys[capturing] = e.code;
-        changed();
+      e.stopImmediatePropagation();
+      if (e.code === 'Escape') {
+        capturing = null;
+        render();
+        return;
       }
+      if (RESERVED.has(e.code)) {
+        hintEl.textContent = `${keyName(e.code)} is reserved (menu, pause, radar, …). Choose another key or Esc.`;
+        return;
+      }
+      // A key already used by another action: swap the two bindings.
+      const other = Object.keys(tuning.keys).find((k) => k !== capturing && tuning.keys[k] === e.code);
+      if (other) tuning.keys[other] = tuning.keys[capturing];
+      tuning.keys[capturing] = e.code;
+      changed();
       capturing = null;
       render();
       return;

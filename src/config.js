@@ -94,12 +94,13 @@ export const DEFAULTS = {
     left: 'ArrowLeft',
     right: 'ArrowRight',
     fire: 'Space',
+    fire2: 'ControlRight', // second fire key (some keyboards cannot register arrows + Space together)
   },
   ball: {
     gravity: 9.81,
     airDrag: 0.12,        // 1/s, applied to velocity relative to the wind
     radius: 0.11,         // physical radius
-    drawRadius: 0.2,      // drawn larger than real, for readability
+    drawRadius: 0.27,     // drawn larger than real, for readability
     minBounceVz: 0.9,     // below this vertical speed the ball stops bouncing and rolls
     boardRestitution: 0.3,
   },
@@ -126,8 +127,8 @@ export const DEFAULTS = {
     blockDamping: 0.25,   // ball speed kept when it bounces off a player's body
   },
   kick: {
-    shotWindow: 0.18,     // seconds after a dribble touch in which fire = shot
-    shotReach: 1.5,       // ball must still be this close to the foot to shoot
+    shotWindow: 0.25,     // seconds after a dribble touch in which fire = shot
+    shotReach: 1.8,       // ball must still be this close to the foot to shoot
     shotSpeed: 24,        // base shot speed (shooting skill 1.0)
     shotLift: 2.6,        // vertical speed of a shot: low drive
     runBonus: 0.3,        // share of the player's speed added to a shot
@@ -155,21 +156,21 @@ export const DEFAULTS = {
   keeper: {
     speed: 6.9,
     accel: 34.5,
-    reach: 0.8,           // catching reach when standing (m)
-    diveReach: 1.2,       // catching reach when diving
+    reach: 0.7,           // catching reach when standing (m)
+    diveReach: 1.1,       // catching reach when diving
     diveSpeed: 8.6,
     diveTime: 0.45,
     downTime: 0.9,        // time on the ground after a dive
     catchHeight: 2.6,
-    holdTime: 1.4,        // seconds before the keeper throws or kicks the ball out
+    holdTime: 1.0,        // seconds before the keeper throws or kicks the ball out
     kickSpeed: 23,
     kickLift: 11,
   },
   setpiece: {
-    deadTime: 0.7,        // ball out: seconds before it is placed for the restart
-    walkTimeout: 4,       // the taker walks to the ball; after this he is placed there
-    humanAuto: 3,         // human throw-in / goal kick is taken automatically after this
-    cpuDelay: 1.2,        // the CPU takes its set pieces after this
+    deadTime: 0.35,       // ball out: seconds before it is placed for the restart
+    walkTimeout: 7,       // the taker walks (runs) to the ball; only after this is he placed there
+    humanAuto: 2.5,       // human throw-in / goal kick is taken automatically after this
+    cpuDelay: 0.6,        // the CPU takes its set pieces after this
     throwMin: 5,          // throw-in speed without / with a full charge
     throwMax: 17,
     cornerMin: 6,         // corner distance at power 1 and 9 (m)
@@ -189,7 +190,7 @@ export const DEFAULTS = {
     passMaxDist: 24,
     pressureDist: 7,      // an opponent this close = under pressure → look for a pass
     laneWidth: 1.8,       // an opponent this close to the pass line blocks it
-    switchMargin: 1.5,    // human control switches when another player is this much closer to the ball
+    switchMargin: 0.8,    // human control switches when another player is this much closer to the ball
   },
   goal: {
     postRadius: 0.06,

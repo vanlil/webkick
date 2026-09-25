@@ -4,7 +4,6 @@
   "description": "Fast, skill-based top-down football in the browser.",
   "start_url": ".",
   "display": "fullscreen",
-  "orientation": "landscape",
   "background_color": "#1d2a22",
   "theme_color": "#2f7a3c",
   "icons": [

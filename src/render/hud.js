@@ -50,12 +50,14 @@ export function drawHud(ctx, W, H, info) {
     ctx.restore();
   }
 
-  ctx.font = `500 12px ${FONT}`;
-  const w = ctx.measureText(HELP).width + 20;
-  pill(ctx, (W - w) / 2, H - 34, w, 24);
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.textAlign = 'center';
-  ctx.fillText(HELP, W / 2, H - 28);
+  if (info.showHelp) {
+    ctx.font = `500 12px ${FONT}`;
+    const w = ctx.measureText(HELP).width + 20;
+    pill(ctx, (W - w) / 2, H - 34, w, 24);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.textAlign = 'center';
+    ctx.fillText(HELP, W / 2, H - 28);
+  }
 
   if (info.paused) {
     ctx.font = `700 42px ${FONT}`;
@@ -69,7 +71,8 @@ export function drawHud(ctx, W, H, info) {
 function drawClock(ctx, W, seconds, half) {
   const mm = Math.floor(seconds / 60);
   const ss = Math.floor(seconds % 60);
-  const text = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}   ${half === 1 ? '1st' : '2nd'} half`;
+  const label = ['1st half', '2nd half', 'extra time 1', 'extra time 2'][half - 1] || '';
+  const text = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}   ${label}`;
   ctx.font = `600 13px ${FONT}`;
   const w = ctx.measureText(text).width + 22;
   pill(ctx, (W - w) / 2, 48, w, 22);

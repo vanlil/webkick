@@ -1,3 +1,4 @@
+import './polyfills.js';
 import { DT, PITCH, TACTIC_NAMES, tuning, loadTuning, saveTuning } from './config.js';
 import { createInput } from './input.js';
 import { createWorld, stepWorld, applyOptions, configureTeams, playerSpeed } from './world/world.js';
@@ -38,6 +39,7 @@ let started = false; // a match is running (possibly paused)
 let paused = false;
 let showDebug = false;
 let fullTimeMenuTimer = 0;
+let helpTimer = 0;
 
 const menus = createMenus(menuEl, {
   startMatch() {
@@ -90,6 +92,7 @@ function newMatch() {
   createMatch(world);
   hud.bannerTime = 0;
   fullTimeMenuTimer = 0;
+  helpTimer = 20; // the key help at the bottom shows for the first seconds of a match
   audio.whistle();
   showAction(`Referee: ${world.referee.name}`, 3);
 }
@@ -240,6 +243,7 @@ function frame(now) {
     }
   }
   if (started && !paused) audio.update(world, realDt);
+  if (helpTimer > 0 && started && !paused) helpTimer -= realDt;
   render(paused ? 1 : acc / DT, realDt);
   requestAnimationFrame(frame);
 }
@@ -268,8 +272,9 @@ function render(alpha, realDt) {
   const minY = camera.y - camera.viewH / 2 - margin, maxY = camera.y + camera.viewH / 2 + margin;
   const drawables = [{ y: by, draw: () => drawBall(ctx, view, ball, bx, by, bz) }];
   const active = world.human && world.human.player;
-  for (const p of world.players) {
-    if (p.sentOff) continue;
+  const bodies = world.referee ? [...world.players, world.referee.body] : world.players;
+  for (const p of bodies) {
+    if (p.sentOff && p.state !== 'leaving') continue;
     const px = lerp(p.prev.x, p.x, alpha);
     const py = lerp(p.prev.y, p.y, alpha);
     if (px < minX || px > maxX || py < minY || py > maxY) continue;
@@ -293,6 +298,7 @@ function render(alpha, realDt) {
     half: world.match.half,
     prompt: world.match.phase === 'fulltime' ? null : setPiecePrompt(world),
     shootout: world.match.shootout,
+    showHelp: helpTimer > 0 || paused,
     hud,
   });
   if (started) drawScanner(ctx, W, H, world, camera, tuning.game.radar);

@@ -1,7 +1,7 @@
 import { DT, PITCH, tuning, currentSurface } from '../config.js';
 import { tacticTarget, toWorld, toNorm } from './tactics.js';
 import { oppGoal, ownGoal } from '../world/team.js';
-import { fromBehind } from '../world/player.js';
+import { fromBehind, fatigue } from '../world/player.js';
 
 // The AI drives outfield players through the same virtual joystick as the human
 // (8 directions + fire), so CPU players follow exactly the same ball rules.
@@ -21,8 +21,16 @@ export function teamJoysticks(team, world, skip, out) {
   let presser = null;
   const m = world.match;
   const open = !m || m.phase === 'play' || (m.phase === 'start' && m.startTeam === team.id);
-  if (!team.human && open) {
+  // The human's team: in fixed-player mode the AI team-mates play fully (chaser, presser);
+  // in nearest mode one only goes for the ball if he is clearly quicker there than the human.
+  const fixed = team.human && world.human && world.human.fixed != null;
+  if (open && outfield.length && (!team.human || fixed)) {
     chaser = pickChaser(team, outfield, ball);
+  } else if (open && outfield.length && skip) {
+    const c = pickChaser(team, outfield, ball);
+    if (intercept(c, ball).t < intercept(skip, ball).t - 0.3) chaser = c;
+  }
+  if (chaser && (!team.human || fixed)) {
     if (lvl.chasers > 1 && !attacking) {
       let best = Infinity;
       for (const p of outfield) {
@@ -78,7 +86,7 @@ function predictBall(b, t) {
 }
 
 function intercept(p, b) {
-  const speed = tuning.player.maxSpeed * p.pace;
+  const speed = tuning.player.maxSpeed * p.pace * fatigue(p);
   let t = Math.hypot(b.x - p.x, b.y - p.y) / speed;
   let q = predictBall(b, t);
   for (let i = 0; i < 3; i++) {
@@ -235,10 +243,13 @@ function trySlide(p, team, world, ball) {
   const bx = ball.x + ball.vx * 0.25, by = ball.y + ball.vy * 0.25; // where the ball will be
   const d = Math.hypot(bx - p.x, by - p.y);
   if (d < 1.0 || d > 3.0) return null;
+  // Only when the ball is nearer to the tackler than to the opponent: then the slide reaches the
+  // ball first (a clean tackle) instead of the man.
+  if (d > Math.hypot(q.x - p.x, q.y - p.y) - 0.3) return null;
   const dx = (bx - p.x) / d, dy = (by - p.y) / d;
   const behind = dx * q.fx + dy * q.fy > 0.5 && (q.x - p.x) * q.fx + (q.y - p.y) * q.fy > 0;
   const willing = behind ? p.aggression * (1 - lvl.tackleSense) : 1;
-  if (world.rng.next() > lvl.slide * willing * 1.2 * DT) return null;
+  if (world.rng.next() > lvl.slide * willing * 0.9 * DT) return null;
   const st = toSector(Math.atan2(dy, dx));
   return { dx: st.dx, dy: st.dy, fire: true };
 }
@@ -274,13 +285,14 @@ function withBall(p, team, world) {
   if (ai.plan === 'pass') return executeTrap(p, lvl, ball, 'pass');
   if (ai.turning) return executeTrap(p, lvl, ball, 'turn');
 
-  // Ball close but not in front of the wanted direction: turn with a trap first.
+  // Ball behind the player (seen from the wanted direction): turn with a trap first.
+  // A ball to the side is played round instead (drive), which keeps the game flowing.
   const bx = ball.x - p.x, by = ball.y - p.y;
   const bd = Math.hypot(bx, by);
-  if (bd < 3 && bd > 0.01 && (bx * ai.dir.x + by * ai.dir.y) / bd < 0.55) {
+  if (bd < 3 && bd > 0.01 && (bx * ai.dir.x + by * ai.dir.y) / bd < -0.2) {
     ai.turning = true;
     ai.passPhase = 'approach';
-    ai.passTimer = 2;
+    ai.passTimer = 1.3;
     return executeTrap(p, lvl, ball, 'turn');
   }
 
@@ -317,22 +329,65 @@ function decide(p, team, world) {
     }
   }
 
+  // Leading by one goal in the last minutes: waste time. Keep the ball near the opponent's
+  // corner flag, or play it back to a free team-mate.
+  if (wastingTime(team, world) && dGoal > lvl.shootRange) {
+    const back = bestPass(p, team, world, ownGoal(team), opponents, 18);
+    if (back && rng.next() < 0.4) {
+      ai.plan = 'dribble';
+      ai.dir = back;
+      ai.planTimer = 0.6;
+      return;
+    }
+    const flagX = ball.x < PITCH.width / 2 ? 1 : PITCH.width - 1;
+    ai.plan = 'dribble';
+    ai.dir = toSectorDir(Math.atan2(g.y - ball.y, flagX - ball.x));
+    return;
+  }
+
   let nearest = Infinity;
   for (const o of opponents) nearest = Math.min(nearest, Math.hypot(o.x - p.x, o.y - p.y));
   const pressured = nearest < tuning.ai.pressureDist;
   if ((pressured || rng.next() < 0.08) && rng.next() > p.flair * 0.6) {
+    // One-touch pass: a team-mate 6–15 m away in a direction the ball already runs in: the next
+    // touch in that direction plays it to him (no trap needed).
+    const quick = bestPass(p, team, world, g, opponents, 15);
+    const bx = ball.x - p.x, by = ball.y - p.y, bd = Math.hypot(bx, by) || 1;
+    if (quick && (bx * quick.x + by * quick.y) / bd > 0.55) {
+      ai.plan = 'dribble';
+      ai.dir = quick;
+      ai.planTimer = 0.6;
+      return;
+    }
     const pass = bestPass(p, team, world, g, opponents);
     if (pass) {
       ai.plan = 'pass';
       ai.dir = pass;
       ai.passPhase = 'approach';
-      ai.passTimer = 2;
+      ai.passTimer = 1.3;
       return;
     }
   }
 
   ai.plan = 'dribble';
+  // Close to goal without a shooting line: turn the dribble towards the goal to set up a shot.
+  if (dGoal < lvl.shootRange * 1.3) {
+    const d = toSectorDir(Math.atan2(g.y - ball.y, g.x - ball.x));
+    if (!blocked(ball, d, 5, opponents, 1.2)) {
+      ai.dir = d;
+      return;
+    }
+  }
   ai.dir = bestDribble(p, ball, g, opponents, ai.dir);
+}
+
+function wastingTime(team, world) {
+  const m = world.match;
+  if (!m || team.human) return false;
+  const lead = world.score[team.id] - world.score[1 - team.id];
+  const lastHalf = m.half === 2 || m.half === 4;
+  const left = 1 - m.clock / ((m.half <= 2 ? tuning.game.halfMinutes : Math.max(1, tuning.game.halfMinutes / 3)) * 60);
+  return lead === 1 && lastHalf && left < 0.15;
 }
 
 // An 8-way direction whose straight line ends between the posts (or close, if the shot can be
@@ -366,14 +421,14 @@ function onTarget(p, team, world) {
   const opponents = world.teams[1 - team.id].players;
   const keeper = opponents[0];
   const targetX = keeper.x < g.x ? GOAL_X1 - 0.8 : GOAL_X0 + 0.8;
-  const margin = lvl.aftertouch > 0 ? 2.5 : -0.4;
+  const margin = lvl.aftertouch > 0 ? 4 : 0.5;
   if (x < GOAL_X0 - margin || x > GOAL_X1 + margin) return null;
   if (blocked(ball, d, Math.abs(g.y - ball.y), opponents.slice(1), 1.0)) return null;
   return { targetX };
 }
 
 // A team-mate reachable with a ground pass along one of the 8 directions.
-function bestPass(p, team, world, g, opponents) {
+function bestPass(p, team, world, g, opponents, maxDist = tuning.ai.passMaxDist) {
   const ball = world.ball;
   const cfg = tuning.ai;
   const goalDir = norm(g.x - ball.x, g.y - ball.y);
@@ -383,7 +438,7 @@ function bestPass(p, team, world, g, opponents) {
     const mx = m.x + m.vx * 0.5, my = m.y + m.vy * 0.5;
     const vx = mx - ball.x, vy = my - ball.y;
     const d = Math.hypot(vx, vy);
-    if (d < cfg.passMinDist || d > cfg.passMaxDist) continue;
+    if (d < (maxDist < cfg.passMaxDist ? 6 : cfg.passMinDist) || d > maxDist) continue;
     const progress = (vx * goalDir.x + vy * goalDir.y);
     if (progress < -4) continue;
     const dir = toSectorDir(Math.atan2(vy, vx));

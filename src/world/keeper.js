@@ -1,5 +1,6 @@
 import { DT, PITCH, tuning } from '../config.js';
 import { bodyBlock, canTouch } from './player.js';
+import { createBall, stepBall } from './ball.js';
 import { ownGoal, inOwnBox } from './team.js';
 
 // CPU goalkeeper. States: 'guard' (positioning), 'rush' (coming out for a loose ball),
@@ -83,16 +84,26 @@ function stepGuard(k, team, world, goal) {
   k.fy /= n;
 }
 
-// Ball heading for the goal: where and when does it cross the keeper's line?
+// Ball heading for the goal: where and when does it cross the keeper's line? The keeper runs
+// the ball physics ahead (air drag, bounces) but does not read spin: a shot bent with
+// aftertouch still beats him.
+const NO_RNG = { next: () => 0.5, range: (a, b) => (a + b) / 2 };
+const ghost = createBall(0, 0);
 function shotThreat(k, ball, goal) {
   const towards = -ball.vy * goal.into; // speed towards the goal line
   if (towards < 3 || Math.abs(ball.y - goal.y) > 40) return null;
-  const t = (k.y - ball.y) / ball.vy;
-  if (!(t > 0 && t < 1.6)) return null;
-  const x = ball.x + ball.vx * t;
-  const z = ball.z + ball.vz * t - 0.5 * tuning.ball.gravity * t * t;
-  if (Math.abs(x - goal.x) > PITCH.goalWidth / 2 + 1.5 || z > PITCH.goalHeight + 0.5) return null;
-  return { x, z: Math.max(0, z), t };
+  Object.assign(ghost, { x: ball.x, y: ball.y, z: ball.z, vx: ball.vx, vy: ball.vy, vz: ball.vz, spin: 0, inGoal: -1 });
+  const sink = [];
+  for (let t = DT; t < 1.6; t += DT) {
+    const before = (ghost.y - k.y) * goal.into;
+    stepBall(ghost, NO_RNG, sink);
+    sink.length = 0;
+    if ((ghost.y - k.y) * goal.into <= 0 && before > 0) {
+      if (Math.abs(ghost.x - goal.x) > PITCH.goalWidth / 2 + 1.5 || ghost.z > PITCH.goalHeight + 0.5) return null;
+      return { x: ghost.x, z: ghost.z, t };
+    }
+  }
+  return null;
 }
 
 // Come out for a loose ball in the box if the keeper gets there first.
@@ -186,7 +197,9 @@ function tryCatch(k, team, world, goal) {
 
   const speed = Math.hypot(ball.vx, ball.vy, ball.vz);
   const own = ball.lastTouch && ball.lastTouch.team === team.id;
-  let pCatch = own ? 1 : Math.min(0.97, Math.max(0.15, team.level.keeperSkill * 1.15 - speed / 45 - (diving ? 0.1 : 0)));
+  // Hard, high and diving saves are harder to hold: then the keeper only parries.
+  const high = Math.max(0, ball.z - 1.5) * 0.35;
+  let pCatch = own ? 1 : Math.min(0.9, Math.max(0.05, team.level.keeperSkill - speed / 40 - high - (diving ? 0.12 : 0)));
   if (landed) pCatch = 0; // lying on the ground: parry only
   ball.touchSeq++;
   ball.lastTouch = k;
@@ -202,9 +215,10 @@ function tryCatch(k, team, world, goal) {
     ball.spin = 0;
     events.push({ type: 'catch' });
   } else {
-    // Parry: push the ball away from the goal and to the side.
-    ball.vy = goal.into * Math.max(3, Math.abs(ball.vy) * 0.35);
-    ball.vx = ball.vx * 0.3 + rng.range(-5, 5);
+    // Parry: push the ball away from the goal and wide, often round the post for a corner.
+    const wide = Math.sign(ball.x - goal.x) || (rng.next() < 0.5 ? -1 : 1);
+    ball.vy = goal.into * Math.max(2, Math.abs(ball.vy) * rng.range(0.1, 0.35));
+    ball.vx = wide * rng.range(4, 10);
     ball.vz = rng.range(1.5, 4);
     ball.spin = 0;
     k.touchTimer = 0.5;

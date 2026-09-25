@@ -7,6 +7,7 @@ import { createTeam, KITS, applyLevel, applyAttributes, setTactic, applyKit } fr
 import { TEAMS, kitsClash, alternateKit } from '../data/teams.js';
 import { teamJoysticks } from '../ai/brain.js';
 import { createMatch, matchPreStep, matchPostStep } from '../rules/match.js';
+import { stepReferee } from '../rules/referee.js';
 
 const HISTORY_STEPS = 40; // ball history for AI reaction delay (0.8 s)
 const IDLE = { dx: 0, dy: 0, fire: false, firePressed: false, fireReleased: false };
@@ -122,12 +123,50 @@ export function stepWorld(world, humanJoy) {
     else stepPlayer(p, joys.get(p) || IDLE, world);
   }
   separatePlayers(world.players);
+  stepReferee(world, DT);
+  stepLeaving(world);
 
   if (!ball.heldBy) stepBall(ball, rng, events);
-  if (ball.lastTouch && !(world.match.phase === 'setpiece')) world.possession = ball.lastTouch.team;
+  updatePossession(world);
   matchPostStep(world, events);
   if (world.match.phase !== 'play' && applyPendingTactics(world, true)) events.push({ type: 'tactic' });
   return events;
+}
+
+// Sent-off players walk to the nearest touchline and leave the pitch.
+function stepLeaving(world) {
+  for (const p of world.players) {
+    if (p.state !== 'leaving') continue;
+    const tx = p.x < PITCH.width / 2 ? -2 : PITCH.width + 2;
+    const dx = tx - p.x;
+    p.vx = Math.sign(dx) * 3;
+    p.vy = 0;
+    p.fx = Math.sign(dx);
+    p.fy = 0;
+    p.x += p.vx * DT;
+    p.runPhase += 3 * DT * 2.4;
+    if (Math.abs(dx) < 0.2) {
+      p.state = 'off';
+      p.vx = 0;
+    }
+  }
+}
+
+// Possession (attack or defence formation) changes only when the other team has kept the ball
+// for 0.35 s, so a deflection or a keeper's parry does not flip both formations.
+function updatePossession(world) {
+  const { ball } = world;
+  if (!ball.lastTouch || world.match.phase === 'setpiece') return;
+  const team = ball.heldBy && ball.heldBy.team !== undefined ? ball.heldBy.team : ball.lastTouch.team;
+  if (team === world.possession) {
+    world.possessionTimer = 0;
+    return;
+  }
+  world.possessionTimer = (world.possessionTimer || 0) + DT;
+  if (world.possessionTimer >= 0.35 || ball.heldBy) {
+    world.possession = team;
+    world.possessionTimer = 0;
+  }
 }
 
 // The human may change player in open play, and during the opponent's set pieces.
@@ -144,7 +183,9 @@ function switchHumanPlayer(world) {
   const cur = h.player;
   if (h.fixed != null) return; // "fixed player" mode: the same player all match
   if (h.switchTimer > 0) h.switchTimer -= DT;
-  const busy = cur.state !== 'run' || (cur.aftertouch && cur.aftertouch.kind !== 'pass');
+  // Keep the player while he traps, jumps, slides or bends a shot; switch away from a player
+  // lying on the ground.
+  const busy = ['trap', 'jump', 'slide'].includes(cur.state) || (cur.aftertouch && cur.aftertouch.kind !== 'pass');
   if (busy || h.switchTimer > 0) return;
   const b = world.ball;
   const tx = b.x + b.vx * 0.3, ty = b.y + b.vy * 0.3;
@@ -157,7 +198,7 @@ function switchHumanPlayer(world) {
   }
   if (best !== cur && bestD < curD - tuning.ai.switchMargin) {
     h.player = best;
-    h.switchTimer = 0.25;
+    h.switchTimer = 0.15;
     best.ai.prevFire = cur.ai.prevFire;
   }
 }
@@ -177,6 +218,11 @@ function separatePlayers(players) {
       a.x -= nx * push; a.y -= ny * push;
       b.x += nx * push; b.y += ny * push;
     }
+  }
+  const m = PITCH.margin - 1;
+  for (const p of players) {
+    p.x = Math.min(PITCH.width + m, Math.max(-m, p.x));
+    p.y = Math.min(PITCH.length + m, Math.max(-m, p.y));
   }
 }
 

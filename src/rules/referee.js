@@ -11,12 +11,47 @@ const NAMES = [
   'O. Castell', 'U. Richter', 'V. Molina', 'W. Hughes', 'Y. Tanaka', 'Z. Adeyemi',
 ];
 
+const REF_KIT = { shirt: '#1b1b1b', shorts: '#1b1b1b', socks: '#1b1b1b', skin: '#d9a47e', hair: '#3b2a1e', stripes: '' };
+
 export function pickReferee(rng) {
   const i = Math.floor(rng.next() * NAMES.length);
   // Fixed per name (derived from the index), so each referee keeps his character.
   const strictness = 0.35 + ((i * 7) % 24) / 24 * 0.65;
   const eyesight = 0.6 + ((i * 11) % 24) / 24 * 0.38;
-  return { name: NAMES[i], strictness, eyesight, mood: rng.range(-0.15, 0.15) };
+  // His body on the pitch (drawn like a player, never touches the ball).
+  const body = {
+    x: PITCH.width / 2 + 8, y: PITCH.length / 2 - 6, z: 0, vx: 0, vy: 0, fx: 0, fy: 1,
+    runPhase: 0, kickTimer: 0, state: 'run', role: 'referee', index: 0, kit: REF_KIT,
+    prev: { x: PITCH.width / 2 + 8, y: PITCH.length / 2 - 6, z: 0 },
+  };
+  return { name: NAMES[i], strictness, eyesight, mood: rng.range(-0.15, 0.15), body };
+}
+
+// The referee follows play along the diagonal, 10–14 m from the ball and a little closer to
+// the middle of the pitch, so he rarely stands in the way.
+export function stepReferee(world, dt) {
+  const ref = world.referee;
+  if (!ref) return;
+  const b = world.ball;
+  const r = ref.body;
+  r.prev.x = r.x;
+  r.prev.y = r.y;
+  const side = b.x > PITCH.width / 2 ? -1 : 1;
+  const ahead = b.y > PITCH.length / 2 ? -1 : 1;
+  const tx = Math.min(PITCH.width - 2, Math.max(2, b.x + side * 10));
+  const ty = Math.min(PITCH.length - 2, Math.max(2, b.y + ahead * 7));
+  const dx = tx - r.x, dy = ty - r.y, d = Math.hypot(dx, dy);
+  const speed = Math.min(7, d * 1.5);
+  const vx = d > 0.1 ? (dx / d) * speed : 0, vy = d > 0.1 ? (dy / d) * speed : 0;
+  r.vx += (vx - r.vx) * Math.min(1, dt * 4);
+  r.vy += (vy - r.vy) * Math.min(1, dt * 4);
+  r.x += r.vx * dt;
+  r.y += r.vy * dt;
+  r.runPhase += Math.hypot(r.vx, r.vy) * dt * 2.4;
+  // He watches the ball.
+  const lx = b.x - r.x, ly = b.y - r.y, ld = Math.hypot(lx, ly) || 1;
+  r.fx = lx / ld;
+  r.fy = ly / ld;
 }
 
 // Decide about a foul: does the referee see it, and is there a card?
@@ -26,7 +61,10 @@ export function judgeFoul(world, foul) {
   const { rng } = world;
   if (!tuning.game.referee || !ref) return { seen: false, card: null };
 
-  const seenChance = Math.min(0.98, ref.eyesight * (foul.fromBehind ? 1 : 0.9) + (foul.kind === 'slide' ? 0.05 : -0.1));
+  // Far from the referee a foul is easier to miss.
+  const dist = ref.body ? Math.hypot(ref.body.x - foul.x, ref.body.y - foul.y) : 15;
+  const range = Math.min(1, Math.max(0.35, 1.25 - dist / 40));
+  const seenChance = Math.min(0.98, (ref.eyesight * (foul.fromBehind ? 1 : 0.9) + (foul.kind === 'slide' ? 0.05 : -0.3)) * range);
   if (rng.next() > seenChance) return { seen: false, card: null };
 
   const team = world.teams[foul.by.team];

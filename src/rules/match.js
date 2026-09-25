@@ -14,7 +14,6 @@ import { pickReferee, judgeFoul, inPenaltyArea } from './referee.js';
 //   'fulltime'
 
 const IDLE = { dx: 0, dy: 0, fire: false, firePressed: false, fireReleased: false };
-const HOLD = { restart: true };
 const HALF_GAME_SECONDS = 45 * 60;
 
 export function createMatch(world) {
@@ -25,6 +24,7 @@ export function createMatch(world) {
   for (const p of world.players) {
     p.yellow = 0;
     p.sentOff = false;
+    p.stamina = 1;
   }
   world.referee = pickReferee(world.rng);
   world.match = { phase: 'start', half: 1, clock: 0, timer: 0, firstStart: first, startTeam: first, startSeq: 0, setPiece: null, shootout: null };
@@ -74,8 +74,10 @@ export function matchPostStep(world, events) {
 
   if (m.phase === 'play' || m.phase === 'setpiece') {
     m.clock += DT;
-    // The half ends at the next moment the ball is in play.
-    if (m.clock >= halfSeconds(m.half) && m.phase === 'play') {
+    // Time is up: the half ends, but not while a shot / free kick / penalty is still on its way
+    // to goal (at most 8 s extra), so a goal in the last second still counts.
+    const over = m.clock >= halfSeconds(m.half);
+    if (over && m.phase === 'play' && (!attackOnGoal(world) || m.clock >= halfSeconds(m.half) + 8)) {
       endHalf(world, events);
       return;
     }
@@ -116,6 +118,7 @@ export function matchPostStep(world, events) {
       m.timer -= DT;
       if (m.timer <= 0) {
         for (const t of world.teams) t.attackDir = -t.attackDir;
+        for (const p of world.players) p.stamina = Math.min(1, (p.stamina ?? 1) + 0.15); // a break
         m.half++;
         m.clock = 0;
         setupCentreStart(world, m.half % 2 === 1 ? m.firstStart : 1 - m.firstStart);
@@ -127,12 +130,20 @@ export function matchPostStep(world, events) {
   }
 }
 
+// Ball moving fast towards a goal from within 30 m.
+function attackOnGoal(world) {
+  const b = world.ball;
+  if (b.dead || b.heldBy || Math.hypot(b.vx, b.vy) < 4) return false;
+  return [0, PITCH.length].some((gy) => Math.abs(b.y - gy) < 30 && (gy - b.y) * b.vy > 0);
+}
+
 function goalScored(world, e) {
   const m = world.match;
   // Goal 0 is the top goal: the team attacking upwards scores there.
   const scorer = world.teams.find((t) => (t.attackDir < 0 ? 0 : 1) === e.goal);
   world.score[scorer.id]++;
   e.team = scorer.id;
+  world.ball.dead = true; // nobody plays the ball out of the net
   m.phase = 'goal';
   m.timer = tuning.goal.resetDelay;
   m.startTeam = 1 - scorer.id;
@@ -140,8 +151,9 @@ function goalScored(world, e) {
 
 function endHalf(world, events) {
   const m = world.match;
-  const { ball } = world;
-  Object.assign(ball, { vx: 0, vy: 0, vz: 0, spin: 0, heldBy: ball.heldBy || HOLD });
+  // The ball is dead from the whistle on (nobody can play it), but it lands and rolls out
+  // naturally instead of stopping in mid-air.
+  world.ball.dead = true;
   events.push({ type: 'whistle', kind: 'long' });
   const level = world.score[0] === world.score[1];
   const rule = tuning.game.draw;
@@ -201,12 +213,9 @@ function foulCalled(world, e, events) {
 // A sent-off player leaves the pitch; he waits at the side of the pitch.
 function sendOff(world, p) {
   p.sentOff = true;
-  p.state = 'off';
+  p.state = 'leaving'; // walks off (world.js), then 'off'
   p.vx = p.vy = 0;
-  p.x = -5.2;
-  p.y = PITCH.length / 2 + (p.team === 0 ? 4 : -4) + p.index * 0.4;
-  p.prev.x = p.x;
-  p.prev.y = p.y;
+  p.aftertouch = null;
   if (world.human && world.human.player === p) {
     const mates = world.teams[p.team].players.filter((q) => q.role !== 'keeper' && !q.sentOff);
     mates.sort((a, b) => Math.hypot(a.x - world.ball.x, a.y - world.ball.y) - Math.hypot(b.x - world.ball.x, b.y - world.ball.y));
@@ -280,7 +289,7 @@ function stepShootoutKick(world, events) {
   if (winner !== null) {
     so.winner = winner;
     m.phase = 'fulltime';
-    Object.assign(ball, { vx: 0, vy: 0, vz: 0, heldBy: ball.heldBy || HOLD });
+    ball.dead = true;
     events.push({ type: 'whistle', kind: 'long' }, { type: 'fulltime' });
     return;
   }

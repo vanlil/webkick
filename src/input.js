@@ -65,7 +65,7 @@ export function createInput(target = window) {
     sample() {
       let dx = (pressed('right') ? 1 : 0) - (pressed('left') ? 1 : 0);
       let dy = (pressed('down') ? 1 : 0) - (pressed('up') ? 1 : 0);
-      let fire = pressed('fire');
+      let fire = pressed('fire') || pressed('fire2');
       const pad = readGamepad();
       if (pad) {
         if (!dx && !dy) { dx = pad.dx; dy = pad.dy; }

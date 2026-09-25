@@ -28,10 +28,10 @@ export function drawPitch(ctx, view) {
   drawMowing(ctx, view, look);
   drawGrassTexture(ctx, view);
 
-  drawBoards(ctx, view);
   drawLines(ctx, view, look.line);
   drawGoalShadow(ctx, view, true);
   drawGoalShadow(ctx, view, false);
+  drawBoards(ctx, view); // after the shadows, so no shadow falls onto the boards
   for (const [x, y] of [[0, 0], [PITCH.width, 0], [0, PITCH.length], [PITCH.width, PITCH.length]]) {
     drawCornerFlag(ctx, view, x, y);
   }
@@ -71,13 +71,12 @@ function drawMowing(ctx, view, look) {
   ctx.fillRect(view.sx(x0), view.sy(y0), w * view.scale, h * view.scale);
 }
 
-// Pre-drawn chessboard tile (2 × 2 cells), cached by size and colours.
+// Pre-drawn chessboard tile (2 × 2 cells): one per colour pair, rebuilt when the size changes.
 const tiles = new Map();
 function chessTile(size, a, b) {
-  const key = `${size}|${a}|${b}`;
+  const key = `${a}|${b}`;
   let t = tiles.get(key);
-  if (!t) {
-    if (tiles.size > 12) tiles.clear();
+  if (!t || t.size !== size) {
     const c = document.createElement('canvas');
     c.width = c.height = size * 2;
     const g = c.getContext('2d');

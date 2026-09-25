@@ -16,7 +16,7 @@ export function startSetPiece(world, type, teamId, x, y, events, opts = {}) {
   const m = world.match;
   m.phase = 'setpiece';
   const foul = type === 'freekick' || type === 'penalty';
-  const dead = opts.shootout ? 0 : tuning.setpiece.deadTime + (foul ? 0.5 : 0);
+  const dead = opts.shootout ? 0 : tuning.setpiece.deadTime + (foul ? 0.4 : 0);
   m.setPiece = { type, team: teamId, x, y, stage: 'dead', timer: dead, taker: null, ui: null, shootout: !!opts.shootout, forcedTaker: opts.taker || null };
   world.ball.dead = true;
   world.possession = teamId; // the team taking it positions itself for attack
@@ -335,7 +335,8 @@ function setupFreeKick(world, sp, team) {
   ];
   sp.wall = [];
   sp.wallSpots = [];
-  if (dist < 35) {
+  // A wall only fits if the free kick is further out than the wall distance.
+  if (dist < 35 && dist > tuning.freekick.wallDistance + 1.5) {
     const defenders = world.teams[1 - team.id].players
       .filter((p) => p.role !== 'keeper' && !p.sentOff)
       .sort((a, b) => Math.hypot(a.x - ball.x, a.y - ball.y) - Math.hypot(b.x - ball.x, b.y - ball.y));
@@ -346,7 +347,7 @@ function setupFreeKick(world, sp, team) {
     sp.wall = defenders.slice(0, n);
     sp.wallSpots = sp.wall.map((_, i) => {
       const o = (i - (n - 1) / 2) * 0.75;
-      return { x: cx + wr.x * o, y: cy + wr.y * o };
+      return { x: cx + wr.x * o, y: Math.min(PITCH.length - 0.5, Math.max(0.5, cy + wr.y * o)) };
     });
   }
 }
