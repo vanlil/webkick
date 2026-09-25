@@ -49,13 +49,24 @@ export function applyLevel(team) {
 
 export function applyAttributes(team) {
   const lvl = team.level;
+  const strength = team.human ? 0 : team.strength || 0; // small differences between CPU teams
   for (const p of team.players) {
     const clamp = (v) => Math.min(1, Math.max(0.2, v));
-    p.pace = lvl.pace + p.variation.pace;
-    p.shooting = clamp(lvl.skill + p.variation.skill);
-    p.passing = clamp(lvl.skill - p.variation.skill * 0.5);
+    p.pace = lvl.pace + p.variation.pace + strength * 0.5;
+    p.shooting = clamp(lvl.skill + strength + p.variation.skill);
+    p.passing = clamp(lvl.skill + strength - p.variation.skill * 0.5);
     p.flair = clamp(0.3 + p.variation.skill * 3);
     p.aggression = p.variation.aggression;
+  }
+}
+
+// Name and colours of a team. kit = { shirt, shorts, stripes }; keeper = keeper shirt colour.
+export function applyKit(team, name, kit, keeper) {
+  team.name = name;
+  team.kit = { ...team.kit, shirt: kit.shirt, shorts: kit.shorts, socks: kit.shirt, stripes: kit.stripes || '' };
+  for (const p of team.players) {
+    if (p.role === 'keeper') Object.assign(p.kit, { shirt: keeper, socks: keeper, shorts: '#1b1b1b', stripes: '' });
+    else Object.assign(p.kit, { shirt: kit.shirt, shorts: kit.shorts, socks: kit.shirt, stripes: kit.stripes || '' });
   }
 }
 

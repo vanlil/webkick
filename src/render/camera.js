@@ -19,7 +19,7 @@ export function updateCamera(cam, target, frameDt, screenW, screenH) {
   cam.y += (ty - cam.y) * k;
 
   // Keep the view inside the stadium. If the view is wider than the stadium, centre it.
-  const m = PITCH.margin + 1;
+  const m = PITCH.margin + 1.5; // grass beyond the lines plus the advertising boards
   cam.x = clampView(cam.x, cam.viewW, -m, PITCH.width + m);
   cam.y = clampView(cam.y, cam.viewH, -m, PITCH.length + m);
 }

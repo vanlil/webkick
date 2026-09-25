@@ -12,7 +12,7 @@ const SURFACE_LOOK = {
 };
 
 const STRIPES = 18;
-const BOARD_DEPTH = 0.8;
+const BOARD_DEPTH = 1.2; // advertising boards around the pitch (drawn depth in metres)
 
 export function drawPitch(ctx, view) {
   const look = SURFACE_LOOK[tuning.game.pitchType] || SURFACE_LOOK.normal;
@@ -25,73 +25,238 @@ export function drawPitch(ctx, view) {
   // Surround (grass outside the lines).
   rectW(ctx, view, -m, -m, PITCH.width + 2 * m, PITCH.length + 2 * m, look.surround);
 
-  // Mowing stripes, extended a bit into the surround. One base fill plus every second
-  // stripe on top, so there are never hairline gaps between neighbouring stripes.
-  const stripeLen = PITCH.length / STRIPES;
-  rectW(ctx, view, -2, -stripeLen, PITCH.width + 4, PITCH.length + 2 * stripeLen, look.a);
-  for (let i = -1; i <= STRIPES; i += 2) {
-    rectW(ctx, view, -2, i * stripeLen, PITCH.width + 4, stripeLen, look.b);
-  }
+  drawMowing(ctx, view, look);
+  drawGrassTexture(ctx, view);
 
   drawBoards(ctx, view);
   drawLines(ctx, view, look.line);
+  drawGoalShadow(ctx, view, true);
+  drawGoalShadow(ctx, view, false);
+  for (const [x, y] of [[0, 0], [PITCH.width, 0], [0, PITCH.length], [PITCH.width, PITCH.length]]) {
+    drawCornerFlag(ctx, view, x, y);
+  }
 }
 
-// Goals are drawn separately so the near (bottom) goal can overlap the players.
-export function drawGoal(ctx, view, top) {
+// --- Grass ----------------------------------------------------------------------------------
+
+// Mowing pattern of the pitch (option "grass"): diamonds (a diagonal chessboard, as in the
+// classic game), stripes, squares or plain. Extended a little into the surround.
+const DIAMOND = 7; // side of one diamond / square (m)
+
+function drawMowing(ctx, view, look) {
+  const kind = tuning.game.grass;
+  const x0 = -2, y0 = -2, w = PITCH.width + 4, h = PITCH.length + 4;
+  if (kind === 'stripes') {
+    // One base fill plus every second stripe on top, so there are no hairline gaps.
+    const stripeLen = PITCH.length / STRIPES;
+    rectW(ctx, view, x0, -stripeLen, w, PITCH.length + 2 * stripeLen, look.a);
+    for (let i = -1; i <= STRIPES; i += 2) rectW(ctx, view, x0, i * stripeLen, w, stripeLen, look.b);
+    return;
+  }
+  if (kind === 'plain') {
+    rectW(ctx, view, x0, y0, w, h, look.a);
+    return;
+  }
+  // Chessboard pattern, anchored at the centre spot so it scrolls with the pitch.
+  const dpr = view.dpr || 1;
+  const cell = DIAMOND * view.scale; // CSS px
+  const tile = chessTile(Math.max(2, Math.round(cell * dpr)), look.a, look.b);
+  const pattern = ctx.createPattern(tile.canvas, 'repeat');
+  const m = new DOMMatrix()
+    .translateSelf(view.sx(PITCH.width / 2), view.sy(PITCH.length / 2))
+    .rotateSelf(kind === 'diamonds' ? 45 : 0)
+    .scaleSelf(cell / tile.size);
+  pattern.setTransform(m);
+  ctx.fillStyle = pattern;
+  ctx.fillRect(view.sx(x0), view.sy(y0), w * view.scale, h * view.scale);
+}
+
+// Pre-drawn chessboard tile (2 × 2 cells), cached by size and colours.
+const tiles = new Map();
+function chessTile(size, a, b) {
+  const key = `${size}|${a}|${b}`;
+  let t = tiles.get(key);
+  if (!t) {
+    if (tiles.size > 12) tiles.clear();
+    const c = document.createElement('canvas');
+    c.width = c.height = size * 2;
+    const g = c.getContext('2d');
+    g.fillStyle = a;
+    g.fillRect(0, 0, size * 2, size * 2);
+    g.fillStyle = b;
+    g.fillRect(0, 0, size, size);
+    g.fillRect(size, size, size, size);
+    t = { canvas: c, size };
+    tiles.set(key, t);
+  }
+  return t;
+}
+
+// Fine speckles over the grass (lighter and darker blades), drawn once into a small tile.
+let grainTile = null;
+function drawGrassTexture(ctx, view) {
+  if (!grainTile) {
+    const size = 128;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const g = c.getContext('2d');
+    for (let i = 0; i < 900; i++) {
+      const light = Math.random() < 0.5;
+      g.fillStyle = light ? `rgba(255,255,230,${0.03 + Math.random() * 0.05})` : `rgba(0,30,0,${0.04 + Math.random() * 0.06})`;
+      g.fillRect(Math.random() * size, Math.random() * size, 1 + Math.random() * 1.5, 1 + Math.random() * 2.5);
+    }
+    grainTile = c;
+  }
+  const m = PITCH.margin;
+  const pattern = ctx.createPattern(grainTile, 'repeat');
+  pattern.setTransform(new DOMMatrix().translateSelf(view.sx(0), view.sy(0)));
+  ctx.fillStyle = pattern;
+  ctx.fillRect(view.sx(-m), view.sy(-m), (PITCH.width + 2 * m) * view.scale, (PITCH.length + 2 * m) * view.scale);
+}
+
+// Shadow direction: ground offset per metre of height (same "sun" as players and ball).
+const SUN = { x: 0.35, y: 0.2 };
+const shadowOf = (view, x, y, z) => [view.sx(x + z * SUN.x), view.sy(y + z * SUN.y)];
+
+// Corner flag: a pole with a small flag, and its shadow.
+function drawCornerFlag(ctx, view, x, y) {
   const s = view.scale;
   const z = tuning.render.zScale;
+  const H = 1.5;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+  ctx.lineWidth = Math.max(1, 0.06 * s);
+  ctx.beginPath();
+  ctx.moveTo(view.sx(x), view.sy(y));
+  ctx.lineTo(...shadowOf(view, x, y, H));
+  ctx.stroke();
+  const bx = view.sx(x), by = view.sy(y), ty = by - H * z * s;
+  ctx.strokeStyle = '#f4f4f4';
+  ctx.lineWidth = Math.max(1.5, 0.07 * s);
+  ctx.beginPath();
+  ctx.moveTo(bx, by);
+  ctx.lineTo(bx, ty);
+  ctx.stroke();
+  ctx.fillStyle = '#ffd23f';
+  ctx.beginPath();
+  ctx.moveTo(bx, ty);
+  ctx.lineTo(bx + 0.5 * s, ty + 0.18 * s);
+  ctx.lineTo(bx, ty + 0.36 * s);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// --- Goals ----------------------------------------------------------------------------------
+// One net geometry (roof, back and both side nets as a mesh of strings, plus the frame) in
+// world coordinates; the goal and its shadow are both drawn from it.
+
+const MESH = 0.35; // size of the net's squares (m)
+
+function goalGeometry(top) {
   const lineY = top ? 0 : PITCH.length;
   const back = top ? -PITCH.goalDepth : PITCH.length + PITCH.goalDepth;
   const x0 = PITCH.width / 2 - PITCH.goalWidth / 2;
   const x1 = PITCH.width / 2 + PITCH.goalWidth / 2;
   const h = PITCH.goalHeight;
   const backH = h * 0.8;
+  const atDepth = (t) => [lineY + (back - lineY) * t, h + (backH - h) * t]; // [y, roof height]
+  const lines = [];
+  const cols = Math.round((x1 - x0) / MESH);
+  const depthSteps = Math.round(PITCH.goalDepth / MESH);
+  const rows = Math.round(backH / MESH);
+  // Roof and back: strings from the crossbar over the roof and down the back.
+  for (let i = 0; i <= cols; i++) {
+    const x = x0 + ((x1 - x0) * i) / cols;
+    lines.push([[x, lineY, h], [x, back, backH]], [[x, back, backH], [x, back, 0]]);
+  }
+  for (let d = 1; d < depthSteps; d++) {
+    const [y, hz] = atDepth(d / depthSteps);
+    lines.push([[x0, y, hz], [x1, y, hz]]);                    // across the roof
+    for (const x of [x0, x1]) lines.push([[x, y, 0], [x, y, hz]]); // side nets, vertical
+  }
+  for (let r = 1; r < rows; r++) {
+    const hz = (backH * r) / rows;
+    lines.push([[x0, back, hz], [x1, back, hz]]);              // back net, horizontal
+    for (const x of [x0, x1]) lines.push([[x, lineY, hz * (h / backH)], [x, back, hz]]); // side nets, along
+  }
+  const panels = [
+    [[x0, lineY, h], [x1, lineY, h], [x1, back, backH], [x0, back, backH]], // roof
+    [[x0, back, backH], [x1, back, backH], [x1, back, 0], [x0, back, 0]],   // back
+    [[x0, lineY, h], [x0, back, backH], [x0, back, 0], [x0, lineY, 0]],     // left side
+    [[x1, lineY, h], [x1, back, backH], [x1, back, 0], [x1, lineY, 0]],     // right side
+  ];
+  const frame = [[x0, lineY, 0], [x0, lineY, h], [x1, lineY, h], [x1, lineY, 0]];
+  return { lines, panels, frame };
+}
 
-  const p = (x, y, hz) => [view.sx(x), view.sy(y) - hz * z * s];
+function strokeLines(ctx, lines, project) {
+  ctx.beginPath();
+  for (const [a, b] of lines) {
+    ctx.moveTo(...project(a));
+    ctx.lineTo(...project(b));
+  }
+  ctx.stroke();
+}
 
-  // Net: the roof and the back, as a light mesh.
-  ctx.save();
-  ctx.lineWidth = Math.max(1, 0.03 * s);
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-  ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  const roof = [p(x0, lineY, h), p(x1, lineY, h), p(x1, back, backH), p(x0, back, backH)];
-  const backNet = [p(x0, back, backH), p(x1, back, backH), p(x1, back, 0), p(x0, back, 0)];
-  for (const poly of [backNet, roof]) {
+function fillPanels(ctx, panels, project) {
+  for (const poly of panels) {
     ctx.beginPath();
-    poly.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    poly.forEach((pt, i) => (i ? ctx.lineTo(...project(pt)) : ctx.moveTo(...project(pt))));
     ctx.closePath();
     ctx.fill();
   }
-  const cols = 14;
-  ctx.beginPath();
-  for (let i = 0; i <= cols; i++) {
-    const x = x0 + ((x1 - x0) * i) / cols;
-    const [ax, ay] = p(x, lineY, h);
-    const [bx, by] = p(x, back, backH);
-    const [cx, cy] = p(x, back, 0);
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(bx, by);
-    ctx.lineTo(cx, cy);
-  }
-  for (let j = 1; j < 4; j++) {
-    const hz = (backH * j) / 4;
-    const [ax, ay] = p(x0, back, hz);
-    const [bx, by] = p(x1, back, hz);
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(bx, by);
-  }
-  ctx.stroke();
+}
 
-  // Frame: posts and crossbar.
-  ctx.lineWidth = Math.max(2, 0.12 * s);
+// Goals are drawn separately so the near (bottom) goal can overlap the players.
+export function drawGoal(ctx, view, top) {
+  const s = view.scale;
+  const z = tuning.render.zScale;
+  const g = goalGeometry(top);
+  const project = ([x, y, hz]) => [view.sx(x), view.sy(y) - hz * z * s];
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  fillPanels(ctx, g.panels, project);
+  ctx.lineWidth = Math.max(0.75, 0.025 * s);
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  strokeLines(ctx, g.lines, project);
+  // Frame: posts and crossbar, with a thin dark edge so it stands out on light grass.
   ctx.lineCap = 'round';
-  ctx.strokeStyle = '#f4f4f4';
+  ctx.lineJoin = 'round';
+  const frame = () => {
+    ctx.beginPath();
+    g.frame.forEach((pt, i) => (i ? ctx.lineTo(...project(pt)) : ctx.moveTo(...project(pt))));
+    ctx.stroke();
+  };
+  ctx.lineWidth = Math.max(3, 0.16 * s);
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  frame();
+  ctx.lineWidth = Math.max(2, 0.12 * s);
+  ctx.strokeStyle = '#f7f7f7';
+  frame();
+  ctx.restore();
+}
+
+// Shadows of the frame and the net on the grass, in the same sun direction as players and ball.
+function drawGoalShadow(ctx, view, top) {
+  const s = view.scale;
+  const g = goalGeometry(top);
+  const project = ([x, y, hz]) => shadowOf(view, x, y, hz);
+  ctx.save();
+  if ('filter' in ctx) ctx.filter = 'blur(0.8px)'; // soft edges
+  // The net only throws a faint pattern; the frame a clear shadow.
+  ctx.fillStyle = 'rgba(0,0,0,0.035)';
+  fillPanels(ctx, g.panels, project);
+  ctx.lineWidth = Math.max(0.6, 0.02 * s);
+  ctx.strokeStyle = 'rgba(0,0,0,0.07)';
+  strokeLines(ctx, g.lines, project);
+  ctx.lineWidth = Math.max(2, 0.13 * s);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
   ctx.beginPath();
-  ctx.moveTo(...p(x0, lineY, 0));
-  ctx.lineTo(...p(x0, lineY, h));
-  ctx.lineTo(...p(x1, lineY, h));
-  ctx.lineTo(...p(x1, lineY, 0));
+  g.frame.forEach((pt, i) => (i ? ctx.lineTo(...project(pt)) : ctx.moveTo(...project(pt))));
   ctx.stroke();
   ctx.restore();
 }
@@ -109,7 +274,7 @@ function drawBoards(ctx, view) {
   const s = view.scale;
   ctx.save();
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.font = `600 ${Math.round(0.55 * s)}px system-ui, -apple-system, sans-serif`;
+  ctx.font = `600 ${Math.round(0.82 * s)}px system-ui, -apple-system, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (let x = 4; x < W; x += 12) {

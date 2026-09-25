@@ -4,7 +4,7 @@ import { PITCH_TYPE_NAMES, WIND_LEVELS, AI_LEVELS, TACTIC_NAMES, HALF_MINUTES, t
 // Live tuning panel. Every change is saved to localStorage. "Copy settings" puts the current
 // values on the clipboard as JSON, so good values can be moved into config.js.
 // `onChange` is called after every change, so the game can apply options at once.
-export function createDevPanel(onChange = () => {}) {
+export function createDevPanel(onChange = () => {}, { hidden = false } = {}) {
   const gui = new GUI({ title: 'Tuning (G)' });
   gui.onChange(() => {
     saveTuning();
@@ -17,7 +17,8 @@ export function createDevPanel(onChange = () => {}) {
   match.add(tuning.game, 'cpuTactic', TACTIC_NAMES).name('CPU tactic');
   match.add(tuning.game, 'halfMinutes', HALF_MINUTES).name('minutes per half');
   match.add(tuning.game, 'referee').name('referee (fouls)');
-  match.add(tuning.game, 'shootout').name('penalties if draw');
+  match.add(tuning.game, 'draw', ['none', 'penalties', 'extra']).name('after a draw');
+  match.add(tuning.game, 'control', ['nearest', 'fixed']).name('control');
 
   const game = gui.addFolder('Game');
   game.add(tuning.game, 'speed', { normal: 1, reduced: 0.75, slow: 0.5 });
@@ -118,7 +119,7 @@ export function createDevPanel(onChange = () => {}) {
   camera.add(tuning.camera, 'viewHeight', 15, 80, 1).name('zoom (visible m)');
   camera.add(tuning.camera, 'lookAhead', 0, 1.5, 0.01).name('look-ahead s');
   camera.add(tuning.camera, 'smoothing', 0.5, 20, 0.1);
-  camera.add(tuning.render, 'playerScale', 1, 2, 0.05).name('player size ×');
+  camera.add(tuning.render, 'playerScale', 1, 3, 0.05).name('player size ×');
   camera.close();
 
   const actions = {
@@ -140,7 +141,8 @@ export function createDevPanel(onChange = () => {}) {
   gui.add(actions, 'copy').name('Copy settings (JSON)');
   gui.add(actions, 'reset').name('Reset to defaults');
 
-  let visible = true;
+  let visible = !hidden;
+  gui.show(visible);
   return {
     refresh() {
       gui.controllersRecursive().forEach((c) => c.updateDisplay());

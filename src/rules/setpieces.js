@@ -28,7 +28,6 @@ export function stepSetPiece(world, humanJoy, joys) {
   const m = world.match;
   const sp = m.setPiece;
   const team = world.teams[sp.team];
-  const human = !!world.human && world.human.team === sp.team;
   const cfg = tuning.setpiece;
   sp.timer -= DT;
 
@@ -36,13 +35,15 @@ export function stepSetPiece(world, humanJoy, joys) {
     if (sp.timer > 0) return;
     placeBall(world, sp, team);
     sp.taker = chooseTaker(world, sp, team);
-    if (human && sp.type !== 'goalkick') world.human.player = sp.taker;
+    const humanTeam = world.human && world.human.team === sp.team;
+    if (humanTeam && world.human.fixed == null && sp.type !== 'goalkick') world.human.player = sp.taker;
     if (sp.type === 'freekick') setupFreeKick(world, sp, team);
     if (sp.type === 'penalty') setupPenalty(world, sp, team);
     sp.stage = 'walk';
     sp.timer = sp.shootout ? 0 : cfg.walkTimeout;
   }
 
+  const human = humanTakes(world, sp);
   if (sp.stage === 'walk') {
     const t = sp.taker;
     if (sp.type !== 'goalkick') {
@@ -77,7 +78,7 @@ export function stepSetPiece(world, humanJoy, joys) {
     world.ball.y = t.y;
     world.ball.z = 2.0;
   }
-  if (sp.type === 'penalty' && world.human && !human) humanKeeper(world, sp, humanJoy);
+  if (sp.type === 'penalty' && world.human && world.human.fixed == null && world.human.team !== sp.team) humanKeeper(world, sp, humanJoy);
   if (human) playerControls(world, sp, team, humanJoy);
   else if (sp.timer <= 0) cpuTake(world, sp, team);
 }
@@ -91,6 +92,15 @@ function humanKeeper(world, sp, joy) {
 }
 
 // --- Human controls -------------------------------------------------------------------------
+
+// Does the human take this set piece? Always for his team, except in fixed-player mode, where
+// he only takes it if his own player is the taker (the keeper's kicks are then the CPU's).
+function humanTakes(world, sp) {
+  const h = world.human;
+  if (!h || h.team !== sp.team) return false;
+  if (h.fixed == null) return true;
+  return sp.type !== 'goalkick' && sp.taker === h.player;
+}
 
 function playerControls(world, sp, team, joy) {
   const cfg = tuning.setpiece;
@@ -489,7 +499,7 @@ function steerJoy(p, spot) {
 export function setPiecePrompt(world) {
   const m = world.match;
   const sp = m.setPiece;
-  if (sp && world.human && sp.team === world.human.team && sp.stage === 'ready') {
+  if (sp && sp.stage === 'ready' && humanTakes(world, sp)) {
     const secs = Math.max(0, Math.ceil(sp.timer));
     if (sp.type === 'throwin') {
       return sp.ui === 'charge'
@@ -514,10 +524,10 @@ export function setPiecePrompt(world) {
       return { text: 'Corner: ←/→ now for bias, then aftertouch', power: sp.power };
     }
   }
-  if (sp && sp.type === 'penalty' && world.human && sp.team !== world.human.team && sp.stage === 'ready' && !sp.keeperDived) {
+  if (sp && sp.type === 'penalty' && world.human && world.human.fixed == null && sp.team !== world.human.team && sp.stage === 'ready' && !sp.keeperDived) {
     return { text: 'Penalty against you: arrow + Space makes your keeper dive (up = high, down = low)' };
   }
-  if (world.human && m.phase === 'play') {
+  if (world.human && world.human.fixed == null && m.phase === 'play') {
     const k = world.teams[world.human.team].players[0];
     if (k.state === 'hold') return { text: 'Keeper: arrow chooses the kick, Space clears' };
   }

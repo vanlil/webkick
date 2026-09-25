@@ -9,7 +9,7 @@ export const PITCH = {
   width: 68,
   length: 105,
   margin: 7,            // grass/track outside the lines up to the boards
-  goalWidth: 7.32,
+  goalWidth: 8.5,        // wider than the real 7.32 m, like the classic game's goals
   goalHeight: 2.44,
   goalDepth: 2.0,
   boxDepth: 16.5,
@@ -75,7 +75,25 @@ export const DEFAULTS = {
     cpuTactic: '4-4-2',
     halfMinutes: 5,
     referee: true,        // off = no fouls are given
-    shootout: false,      // penalty shoot-out if the match ends in a draw
+    draw: 'none',         // after a draw: 'none', 'penalties', 'extra' (extra time, then penalties)
+    control: 'nearest',   // 'nearest' (auto switch) or 'fixed' (one player all match)
+    fixedPlayer: 10,      // index of the fixed player (1 … 10)
+    radar: 1,             // 0 off, 1 small, 2 large
+    grass: 'diamonds',    // mowing pattern: 'diamonds', 'stripes', 'squares', 'plain'
+  },
+  team: {
+    home: 0,              // index into TEAMS (your team)
+    away: 1,              // the CPU's team
+    shirt: '',            // your kit; empty = the team's own colours
+    shorts: '',
+    stripes: '',          // stripe colour, empty = plain shirt
+  },
+  keys: {
+    up: 'ArrowUp',
+    down: 'ArrowDown',
+    left: 'ArrowLeft',
+    right: 'ArrowRight',
+    fire: 'Space',
   },
   ball: {
     gravity: 9.81,
@@ -86,9 +104,9 @@ export const DEFAULTS = {
     boardRestitution: 0.3,
   },
   player: {
-    maxSpeed: 7.0,        // top running speed (pace 1.0)
-    accel: 38,            // how fast the player reaches top speed
-    decel: 30,            // how fast the player stops when the stick is released
+    maxSpeed: 8.05,       // top running speed (pace 1.0); 15 % above the first version's 7.0
+    accel: 44,            // how fast the player reaches top speed
+    decel: 34.5,          // how fast the player stops when the stick is released
     footReach: 0.42,      // distance of the "foot point" in front of the body centre
     touchRadius: 0.65,    // ball within this distance of the foot point = touch
     bodyRadius: 0.3,      // keep bodyRadius + ball radius < footReach, or a trapped ball touches the body
@@ -96,7 +114,7 @@ export const DEFAULTS = {
     minPush: 2.2,         // minimum ball speed after a touch
     touchCooldown: 0.12,  // seconds between two touches
     trapTurnRate: 12,     // turning speed with the ball trapped (rad/s; 180° ≈ 0.26 s)
-    slideSpeed: 8.5,      // minimum speed at the start of a sliding tackle
+    slideSpeed: 9.8,      // minimum speed at the start of a sliding tackle
     slideTime: 0.55,
     slideFriction: 9,     // deceleration while sliding (m/s²)
     slideRecover: 0.45,   // time to get up after a slide
@@ -135,11 +153,11 @@ export const DEFAULTS = {
     overheadTime: 0.9,    // time on the ground after an overhead kick
   },
   keeper: {
-    speed: 6.0,
-    accel: 30,
+    speed: 6.9,
+    accel: 34.5,
     reach: 0.8,           // catching reach when standing (m)
     diveReach: 1.2,       // catching reach when diving
-    diveSpeed: 7.5,
+    diveSpeed: 8.6,
     diveTime: 0.45,
     downTime: 0.9,        // time on the ground after a dive
     catchHeight: 2.6,
@@ -186,13 +204,13 @@ export const DEFAULTS = {
     crowd: 0.6,
   },
   camera: {
-    viewHeight: 36,       // visible pitch height in metres (zoom)
+    viewHeight: 40,       // visible pitch height in metres (zoom)
     lookAhead: 0.35,      // seconds of ball velocity to look ahead
     smoothing: 5,         // higher = camera follows faster
   },
   render: {
     zScale: 0.75,         // height → screen offset factor (3/4 view)
-    playerScale: 1.3,     // players drawn larger than real, for readability (visual only)
+    playerScale: 2.0,     // players drawn larger than real, for readability (visual only)
   },
   surfaces: PITCH_TYPES,
 };
@@ -201,17 +219,43 @@ export const PITCH_TYPE_NAMES = Object.keys(PITCH_TYPES);
 
 export const tuning = structuredClone(DEFAULTS);
 
-const STORAGE_KEY = 'webkick.tuning.v1';
+// Only values that differ from the defaults are stored, so improved defaults in a new
+// version still reach players who never changed that value.
+const STORAGE_KEY = 'webkick.tuning.v2';
+const OLD_KEY = 'webkick.tuning.v1'; // stored every value; only the player's choices are kept
+const PLAYER_CHOICES = ['game', 'team', 'keys', 'audio'];
 
 export function loadTuning() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) mergeKnown(tuning, JSON.parse(raw), DEFAULTS);
+    if (raw) {
+      mergeKnown(tuning, JSON.parse(raw), DEFAULTS);
+      return;
+    }
+    const old = localStorage.getItem(OLD_KEY);
+    if (old) {
+      const parsed = JSON.parse(old);
+      for (const group of PLAYER_CHOICES) mergeKnown(tuning[group], parsed[group], DEFAULTS[group]);
+      localStorage.removeItem(OLD_KEY);
+      saveTuning();
+    }
   } catch { /* storage blocked or corrupt: keep defaults */ }
 }
 
 export function saveTuning() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tuning)); } catch { /* ignore */ }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(diff(tuning, DEFAULTS) || {})); } catch { /* ignore */ }
+}
+
+// The parts of `obj` that differ from `base` (nested), or undefined if nothing differs.
+function diff(obj, base) {
+  if (!obj || typeof obj !== 'object') return obj === base ? undefined : obj;
+  const out = {};
+  let any = false;
+  for (const k of Object.keys(obj)) {
+    const d = diff(obj[k], base ? base[k] : undefined);
+    if (d !== undefined) { out[k] = d; any = true; }
+  }
+  return any ? out : undefined;
 }
 
 export function resetTuning() {

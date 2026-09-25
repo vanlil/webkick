@@ -3,7 +3,8 @@ import { createRng } from '../rng.js';
 import { createBall, stepBall } from './ball.js';
 import { stepPlayer, playerSpeed } from './player.js';
 import { stepKeeper } from './keeper.js';
-import { createTeam, KITS, applyLevel, applyAttributes, setTactic } from './team.js';
+import { createTeam, KITS, applyLevel, applyAttributes, setTactic, applyKit } from './team.js';
+import { TEAMS, kitsClash, alternateKit } from '../data/teams.js';
 import { teamJoysticks } from '../ai/brain.js';
 import { createMatch, matchPreStep, matchPostStep } from '../rules/match.js';
 
@@ -26,13 +27,30 @@ export function createWorld({ seed = 20260925, withHuman = true } = {}) {
     history: [],
     possession: 0,
     score: [0, 0],
-    human: withHuman ? { team: 0, player: teams[0].players[10], switchTimer: 0 } : null,
+    human: withHuman ? { team: 0, player: teams[0].players[10], switchTimer: 0, fixed: null } : null,
     humanJoy: null,
     joys: new Map(),
     match: null,
   };
+  configureTeams(world);
   createMatch(world);
   return world;
+}
+
+// Teams, kits and control mode from the match setup (tuning.team, tuning.game).
+export function configureTeams(world) {
+  const t = tuning.team;
+  const home = TEAMS[t.home] || TEAMS[0];
+  const away = TEAMS[t.away] || TEAMS[1];
+  const homeKit = t.shirt
+    ? { shirt: t.shirt, shorts: t.shorts || home.shorts, stripes: t.stripes }
+    : { shirt: home.shirt, shorts: home.shorts, stripes: home.stripes };
+  const awayKit = kitsClash(homeKit.shirt, away.shirt) ? alternateKit(away) : away;
+  applyKit(world.teams[0], home.name, homeKit, home.keeper);
+  applyKit(world.teams[1], away.name, awayKit, away.keeper);
+  world.teams[1].strength = away.strength;
+  applyAttributes(world.teams[1]);
+  if (world.human) world.human.fixed = tuning.game.control === 'fixed' ? tuning.game.fixedPlayer : null;
 }
 
 // Re-read options that can change during play (difficulty, tactics).
@@ -42,8 +60,22 @@ export function applyOptions(world) {
     applyLevel(cpu);
     applyAttributes(cpu);
   }
-  if (world.teams[0].tactic !== tuning.game.humanTactic) setTactic(world.teams[0], tuning.game.humanTactic);
-  if (world.teams[1].tactic !== tuning.game.cpuTactic) setTactic(world.teams[1], tuning.game.cpuTactic);
+  // A new tactic takes effect at the next stoppage (not in open play).
+  world.teams[0].pendingTactic = tuning.game.humanTactic;
+  world.teams[1].pendingTactic = tuning.game.cpuTactic;
+  applyPendingTactics(world, !world.match || world.match.phase !== 'play');
+}
+
+// Returns true if a team changed its tactic.
+function applyPendingTactics(world, stoppage) {
+  let changed = false;
+  for (const team of world.teams) {
+    if (!team.pendingTactic || team.pendingTactic === team.tactic) continue;
+    if (!stoppage) continue;
+    setTactic(team, team.pendingTactic);
+    changed = true;
+  }
+  return changed;
 }
 
 export function stepWorld(world, humanJoy) {
@@ -77,7 +109,8 @@ export function stepWorld(world, humanJoy) {
     const keeper = world.teams[world.human.team].players[0];
     const sp = world.match.setPiece;
     const keeperPenalty = sp && sp.type === 'penalty' && sp.team !== world.human.team;
-    joys.set(active, keeper.state === 'hold' || keeperPenalty ? IDLE : humanJoy);
+    const keeperBusy = world.human.fixed == null && (keeper.state === 'hold' || keeperPenalty);
+    joys.set(active, keeperBusy ? IDLE : humanJoy);
   }
   matchPreStep(world, humanJoy, joys);
 
@@ -93,6 +126,7 @@ export function stepWorld(world, humanJoy) {
   if (!ball.heldBy) stepBall(ball, rng, events);
   if (ball.lastTouch && !(world.match.phase === 'setpiece')) world.possession = ball.lastTouch.team;
   matchPostStep(world, events);
+  if (world.match.phase !== 'play' && applyPendingTactics(world, true)) events.push({ type: 'tactic' });
   return events;
 }
 
@@ -108,6 +142,7 @@ function switchHumanPlayer(world) {
   const h = world.human;
   const team = world.teams[h.team];
   const cur = h.player;
+  if (h.fixed != null) return; // "fixed player" mode: the same player all match
   if (h.switchTimer > 0) h.switchTimer -= DT;
   const busy = cur.state !== 'run' || (cur.aftertouch && cur.aftertouch.kind !== 'pass');
   if (busy || h.switchTimer > 0) return;

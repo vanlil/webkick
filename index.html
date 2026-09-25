@@ -15,7 +15,14 @@
   <canvas id="game"></canvas>
   <div id="title" role="dialog" aria-label="webkick title screen">
     <p id="title-prompt">Loading…</p>
-    <p id="title-help">Arrows: run · Space: fire · G: tuning panel</p>
+    <p id="title-help">Arrows: run · Space: fire · Esc: menu</p>
+  </div>
+  <div id="menu" class="hidden" role="dialog" aria-label="webkick menu">
+    <div class="menu-panel">
+      <h2 class="menu-title"></h2>
+      <ul class="menu-items"></ul>
+      <p class="menu-hint"></p>
+    </div>
   </div>
   <noscript>webkick needs JavaScript.</noscript>
   <script type="module" src="src/main.js"></script>

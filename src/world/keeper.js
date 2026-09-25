@@ -225,7 +225,7 @@ function stepHold(k, team, world, goal) {
   k.fy = goal.into;
   // During a set piece (goal kick) the set piece code decides when he kicks.
   if (world.match && world.match.phase !== 'play') return;
-  if (team.human && world.humanJoy) {
+  if (team.human && world.humanJoy && world.human && world.human.fixed == null) {
     if (world.humanJoy.firePressed) {
       clearance(k, team, world, world.humanJoy);
       return;

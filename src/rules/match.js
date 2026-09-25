@@ -31,11 +31,14 @@ export function createMatch(world) {
   setupCentreStart(world, first);
 }
 
-const halfSeconds = () => tuning.game.halfMinutes * 60;
+// Real seconds per half; the two halves of extra time are a third as long (at least 1 min).
+const halfSeconds = (half = 1) => (half <= 2 ? tuning.game.halfMinutes * 60 : Math.max(60, tuning.game.halfMinutes * 20));
 
-// Game time shown on the clock, in seconds (0 … 90 minutes).
+// Game time shown on the clock, in seconds: 0–45, 45–90, extra time 90–105, 105–120.
 export function gameTime(m) {
-  return (m.half - 1) * HALF_GAME_SECONDS + Math.min(1, m.clock / halfSeconds()) * HALF_GAME_SECONDS;
+  const start = [0, 45, 90, 105][m.half - 1] * 60;
+  const length = (m.half <= 2 ? 45 : 15) * 60;
+  return start + Math.min(1, m.clock / halfSeconds(m.half)) * length;
 }
 
 // Before the players move: joystick overrides for the current phase.
@@ -48,7 +51,10 @@ export function matchPreStep(world, humanJoy, joys) {
     const striker = strikerOf(world.teams[m.startTeam]);
     for (const p of world.players) {
       if (p === striker) {
-        if (!world.teams[p.team].human && m.timer > 0) joys.set(p, IDLE);
+        const humanPlays = world.human && world.human.player === p;
+        if (!humanPlays && m.timer > 0) joys.set(p, IDLE);
+        // A CPU-controlled striker of the human's team (fixed-player mode) walks to the ball.
+        else if (!humanPlays && world.teams[p.team].human) joys.set(p, towards(p, world.ball));
         continue;
       }
       if (world.human && p === world.human.player) continue;
@@ -69,7 +75,7 @@ export function matchPostStep(world, events) {
   if (m.phase === 'play' || m.phase === 'setpiece') {
     m.clock += DT;
     // The half ends at the next moment the ball is in play.
-    if (m.clock >= halfSeconds() && m.phase === 'play') {
+    if (m.clock >= halfSeconds(m.half) && m.phase === 'play') {
       endHalf(world, events);
       return;
     }
@@ -110,9 +116,9 @@ export function matchPostStep(world, events) {
       m.timer -= DT;
       if (m.timer <= 0) {
         for (const t of world.teams) t.attackDir = -t.attackDir;
-        m.half = 2;
+        m.half++;
         m.clock = 0;
-        setupCentreStart(world, 1 - m.firstStart);
+        setupCentreStart(world, m.half % 2 === 1 ? m.firstStart : 1 - m.firstStart);
         events.push({ type: 'whistle', kind: 'short' });
       }
       break;
@@ -137,16 +143,32 @@ function endHalf(world, events) {
   const { ball } = world;
   Object.assign(ball, { vx: 0, vy: 0, vz: 0, spin: 0, heldBy: ball.heldBy || HOLD });
   events.push({ type: 'whistle', kind: 'long' });
-  if (m.half === 1) {
+  const level = world.score[0] === world.score[1];
+  const rule = tuning.game.draw;
+  if (m.half === 1 || m.half === 3) {
     m.phase = 'halftime';
     m.timer = tuning.setpiece.halfTimePause;
-    events.push({ type: 'halftime' });
-  } else if (tuning.game.shootout && world.score[0] === world.score[1]) {
+    events.push({ type: m.half === 1 ? 'halftime' : 'extrabreak' });
+  } else if (m.half === 2 && level && rule === 'extra') {
+    m.phase = 'halftime';
+    m.timer = tuning.setpiece.halfTimePause;
+    events.push({ type: 'extratime' });
+  } else if (level && (rule === 'penalties' || (rule === 'extra' && m.half === 4))) {
     startShootout(world, events);
   } else {
     m.phase = 'fulltime';
     events.push({ type: 'fulltime' });
   }
+}
+
+// Simple joystick towards a point (8 directions).
+function towards(p, target) {
+  const a = Math.atan2(target.y - p.y, target.x - p.x);
+  const s = Math.round(a / (Math.PI / 4));
+  return {
+    dx: Math.round(Math.cos(s * Math.PI / 4)), dy: Math.round(Math.sin(s * Math.PI / 4)),
+    fire: false, firePressed: false, fireReleased: false, noReverse: true,
+  };
 }
 
 // --- Fouls ----------------------------------------------------------------------------------
@@ -188,7 +210,15 @@ function sendOff(world, p) {
   if (world.human && world.human.player === p) {
     const mates = world.teams[p.team].players.filter((q) => q.role !== 'keeper' && !q.sentOff);
     mates.sort((a, b) => Math.hypot(a.x - world.ball.x, a.y - world.ball.y) - Math.hypot(b.x - world.ball.x, b.y - world.ball.y));
-    if (mates.length) world.human.player = mates[0];
+    if (mates.length) {
+      world.human.player = mates[0];
+      // Fixed-player mode: a midfielder takes over.
+      if (world.human.fixed != null) {
+        const mid = mates.find((q) => q.role === 'mid') || mates[0];
+        world.human.player = mid;
+        world.human.fixed = mid.index;
+      }
+    }
   }
 }
 
@@ -354,7 +384,9 @@ export function setupCentreStart(world, teamId) {
   if (world.human) {
     const t = world.teams[world.human.team];
     const own = t.players.filter((p) => p.role !== 'keeper' && !p.sentOff);
-    world.human.player = t.id === teamId ? strikerOf(t) : own[own.length - 2] || own[0];
+    const fixed = world.human.fixed != null ? t.players[world.human.fixed] : null;
+    if (fixed && !fixed.sentOff) world.human.player = fixed;
+    else world.human.player = t.id === teamId ? strikerOf(t) : own[own.length - 2] || own[0];
   }
 }
 

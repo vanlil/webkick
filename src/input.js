@@ -1,23 +1,18 @@
+import { tuning } from './config.js';
+
 // Keyboard (+ optional gamepad) → one virtual joystick: 8 directions and one fire button.
 // The simulation reads the joystick once per fixed step via sample().
+// The keys come from tuning.keys (remappable in the Controls menu).
 
-const P1_KEYS = {
-  up: ['ArrowUp'],
-  down: ['ArrowDown'],
-  left: ['ArrowLeft'],
-  right: ['ArrowRight'],
-  fire: ['Space', 'ControlRight'],
-};
-
-const GAME_KEYS = new Set(Object.values(P1_KEYS).flat());
 const DEADZONE = 0.4;
+const isGameKey = (code) => Object.values(tuning.keys).includes(code);
 
 export function createInput(target = window) {
   const down = new Set();
   const commandHandlers = new Map();
 
   target.addEventListener('keydown', (e) => {
-    if (GAME_KEYS.has(e.code)) {
+    if (isGameKey(e.code)) {
       e.preventDefault();
       down.add(e.code);
       return;
@@ -33,7 +28,7 @@ export function createInput(target = window) {
   // Avoid stuck keys when the window loses focus.
   target.addEventListener('blur', () => down.clear());
 
-  const anyDown = (codes) => codes.some((c) => down.has(c));
+  const pressed = (action) => down.has(tuning.keys[action]);
   let prevFire = false;
 
   function readGamepad() {
@@ -60,11 +55,17 @@ export function createInput(target = window) {
       commandHandlers.set(code, handler);
     },
 
+    // Forget held keys (e.g. when a menu closes, so a key used there does not count as held).
+    reset() {
+      down.clear();
+      prevFire = false;
+    },
+
     // Called once per simulation step.
     sample() {
-      let dx = (anyDown(P1_KEYS.right) ? 1 : 0) - (anyDown(P1_KEYS.left) ? 1 : 0);
-      let dy = (anyDown(P1_KEYS.down) ? 1 : 0) - (anyDown(P1_KEYS.up) ? 1 : 0);
-      let fire = anyDown(P1_KEYS.fire);
+      let dx = (pressed('right') ? 1 : 0) - (pressed('left') ? 1 : 0);
+      let dy = (pressed('down') ? 1 : 0) - (pressed('up') ? 1 : 0);
+      let fire = pressed('fire');
       const pad = readGamepad();
       if (pad) {
         if (!dx && !dy) { dx = pad.dx; dy = pad.dy; }
