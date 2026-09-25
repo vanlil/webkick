@@ -33,7 +33,19 @@ export function createDevPanel(onChange = () => {}) {
   player.add(tuning.player, 'footReach', 0, 1, 0.01).name('foot reach');
   player.add(tuning.player, 'touchRadius', 0.2, 1.2, 0.01).name('touch radius');
   player.add(tuning.player, 'touchCooldown', 0, 0.5, 0.01).name('touch cooldown');
+  player.add(tuning.player, 'trapTurnRate', 3, 40, 0.5).name('trap turn speed');
+  player.add(tuning.player, 'touchMaxHeight', 0.2, 1.5, 0.05).name('foot max height');
+  player.add(tuning.player, 'controlRadius', 0.2, 1.5, 0.05).name('control radius');
+  player.add(tuning.player, 'controlHeight', 0.5, 2.5, 0.05).name('control height');
+  player.add(tuning.player, 'controlMaxSpeed', 5, 40, 0.5).name('control max speed');
   player.add(tuning.player, 'blockDamping', 0, 1, 0.01).name('block damping');
+
+  const sound = gui.addFolder('Sound (M)');
+  sound.add(tuning.audio, 'mode', ['all', 'crowd', 'off']);
+  sound.add(tuning.audio, 'master', 0, 1, 0.01);
+  sound.add(tuning.audio, 'effects', 0, 1, 0.01);
+  sound.add(tuning.audio, 'crowd', 0, 1, 0.01);
+  sound.close();
 
   const kick = gui.addFolder('Kicking');
   const k = tuning.kick;

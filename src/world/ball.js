@@ -37,6 +37,11 @@ const MAX_SUBSTEP_DIST = 0.08; // metres per substep; keeps fast shots from pass
 // 'goal') into `events`.
 // ball.prev (for render interpolation) is set by the caller at the start of the whole step.
 export function stepBall(ball, rng, events) {
+  // Start of this step's movement: players test contact against the whole path (swept test).
+  if (!ball.from) ball.from = { x: 0, y: 0, z: 0 };
+  ball.from.x = ball.x;
+  ball.from.y = ball.y;
+  ball.from.z = ball.z;
   const speed = Math.hypot(ball.vx, ball.vy, ball.vz);
   const n = Math.min(8, Math.max(1, Math.ceil((speed * DT) / MAX_SUBSTEP_DIST)));
   const h = DT / n;

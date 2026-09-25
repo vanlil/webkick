@@ -17,9 +17,11 @@ Use `-p <port>` for another port.
 
 ## Status
 
-Milestone 4 (match): two halves with a clock and a change of ends, kick-off, throw-ins,
-corners and goal kicks you take yourself, a radar map, a title screen, and a web app icon. Earlier: 11 against
-11 with tactics, goalkeepers and a CPU opponent (easy / medium / hard, in the tuning panel).
+Milestone 5 (sound): crowd murmur that rises near the goals, goal roar, "oooh" on near
+misses, applause, kick and bounce sounds, post clang, net swish and the referee's whistle —
+all generated in code with the Web Audio API (no sound files). Earlier: full matches with
+halves, set pieces, radar and title screen; 11 against 11 with tactics, goalkeepers and a CPU
+opponent (easy / medium / hard, in the tuning panel).
 
 ## Controls
 
@@ -40,6 +42,7 @@ corners and goal kicks you take yourself, a radar map, a title screen, and a web
 | **Corner** | ←/→ power (9 steps), Space; hold Space again for height; ←/→ during the run-up for bias; then aftertouch |
 | **Goal kick / keeper has the ball** | Arrow chooses the kick (forward = strong, centre = medium, back = weak; sideways = angle), Space kicks |
 | X | Radar: small / large / off |
+| M | Sound: all / crowd only / off (volumes in the tuning panel) |
 | L | High ball dropping in front of the player (practice) |
 | R | New match |
 | P | Pause |

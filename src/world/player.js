@@ -107,51 +107,110 @@ function stepRun(p, joy, dir, world) {
   footContact(p, joy, world);
 }
 
-// Ball at the foot: trap if fire is held, otherwise push it ahead (dribble).
+// Ball contact in normal play:
+// - ball at the feet: trap if fire is held, otherwise push it ahead (dribble);
+// - ball coming at the player up to shoulder height: he controls it, and it drops at his
+//   feet (trap if fire is held); a very hard shot deflects off him instead.
+// The tests use the ball's whole movement in the last step, so fast balls cannot slip through.
 function footContact(p, joy, world) {
-  const { ball, events } = world;
+  const { ball } = world;
   const cfg = tuning.player;
+  if (p.touchTimer > 0 || !canTouch(p, ball, world)) {
+    bodyBlock(p, ball, world);
+    return;
+  }
   const foot = footPoint(p);
-  const speed = playerSpeed(p);
+  const atFoot = closestApproach(ball, foot.x, foot.y);
+  if (atFoot.z < cfg.touchMaxHeight && atFoot.d < cfg.touchRadius) {
+    if (joy.fire) trap(p, ball, world);
+    else if (playerSpeed(p) > 0.5) push(p, ball, world);
+    else if (approaching(p, ball)) control(p, ball, world, foot);
+    return;
+  }
 
-  if (p.touchTimer <= 0 && canTouch(p, ball, world) && ball.z < cfg.touchMaxHeight && Math.hypot(ball.x - foot.x, ball.y - foot.y) < cfg.touchRadius) {
-    if (joy.fire) {
-      p.state = 'trap';
-      p.trapDir = { x: p.fx, y: p.fy };
-      p.flickTimer = 0;
-      p.vx = p.vy = 0;
-      stopBall(ball);
-      touched(p, ball, world);
-      events.push({ type: 'trap' });
-      return;
-    }
-    if (speed > 0.5) {
-      // The ball is never attached: how far it runs ahead depends only on the player's speed.
-      const push = Math.max(speed * cfg.dribbleFactor, cfg.minPush);
-      ball.vx = p.fx * push;
-      ball.vy = p.fy * push;
-      ball.vz = 0;
-      ball.z = 0;
-      ball.spin = 0;
-      touched(p, ball, world);
-      p.touchTimer = cfg.touchCooldown;
-      p.shotWindow = tuning.kick.shotWindow;
-      events.push({ type: 'touch' });
-      return;
-    }
+  const atBody = closestApproach(ball, p.x, p.y);
+  if (atBody.z < cfg.controlHeight + p.z && atBody.d < cfg.controlRadius && approaching(p, ball)) {
+    const rel = Math.hypot(ball.vx - p.vx, ball.vy - p.vy, ball.vz);
+    if (rel > cfg.controlMaxSpeed) bodyBlock(p, ball, world, atBody);
+    else if (joy.fire) trap(p, ball, world);
+    else control(p, ball, world, foot);
+    return;
   }
   bodyBlock(p, ball, world);
 }
 
+function trap(p, ball, world) {
+  p.state = 'trap';
+  p.trapDir = { x: p.fx, y: p.fy };
+  p.trapAim = null;
+  p.flickTimer = 0;
+  p.vx = p.vy = 0;
+  // The ball stops where it is (the player steps to it); a high ball drops.
+  ball.vx = ball.vy = 0;
+  ball.vz = Math.min(ball.vz, 0);
+  ball.spin = 0;
+  touched(p, ball, world);
+  world.events.push({ type: 'trap' });
+}
+
+// Dribble touch: the ball is never attached; how far it runs ahead depends only on the
+// player's speed.
+function push(p, ball, world) {
+  const cfg = tuning.player;
+  const speed = Math.max(playerSpeed(p) * cfg.dribbleFactor, cfg.minPush);
+  ball.vx = p.fx * speed;
+  ball.vy = p.fy * speed;
+  ball.vz = Math.min(ball.vz, 0) * 0.3; // a bouncing ball keeps its height and drops, no snap
+  ball.spin = 0;
+  touched(p, ball, world);
+  p.touchTimer = cfg.touchCooldown;
+  p.shotWindow = tuning.kick.shotWindow;
+  world.events.push({ type: 'touch' });
+}
+
+// Cushion the ball: it loses its speed, moves on with the player and glides to his feet
+// (no jump); a high ball drops to the ground.
+function control(p, ball, world, foot) {
+  const cfg = tuning.player;
+  ball.vx = p.vx + (foot.x - ball.x) * 4 + p.fx * 0.5;
+  ball.vy = p.vy + (foot.y - ball.y) * 4 + p.fy * 0.5;
+  ball.vz = Math.min(ball.vz, 0) * 0.3;
+  ball.spin = 0;
+  touched(p, ball, world);
+  p.touchTimer = cfg.touchCooldown;
+  world.events.push({ type: 'control' });
+}
+
+// Is the ball moving towards the player (and not just rolling away after his own touch)?
+function approaching(p, ball) {
+  const rx = p.x - ball.x, ry = p.y - ball.y;
+  return (ball.vx - p.vx) * rx + (ball.vy - p.vy) * ry > 0.3;
+}
+
+// Closest point of the ball's movement in the last step to (x, y), on the ground plane.
+// Returns the distance and the ball's height at that point.
+function closestApproach(ball, x, y) {
+  const f = ball.from || ball;
+  const sx = ball.x - f.x, sy = ball.y - f.y;
+  const len2 = sx * sx + sy * sy;
+  let t = len2 > 1e-9 ? ((x - f.x) * sx + (y - f.y) * sy) / len2 : 1;
+  t = Math.max(0, Math.min(1, t));
+  const cx = f.x + sx * t, cy = f.y + sy * t;
+  return { d: Math.hypot(x - cx, y - cy), z: f.z + (ball.z - f.z) * t, x: cx, y: cy };
+}
+
 // Ball bounces off the body (legs up to chest height), losing most of its speed.
-export function bodyBlock(p, ball, world) {
+// `hit` (optional) is the point where a hard shot passes the player: it deflects from there.
+export function bodyBlock(p, ball, world, hit = null) {
   const cfg = tuning.player;
   if (p.kickTimer > 0 || ball.z > 1.8 + p.z || !canTouch(p, ball, world)) return; // never block your own kick
   const { events } = world;
-  const dx = ball.x - p.x;
-  const dy = ball.y - p.y;
+  const bx = hit ? hit.x : ball.x;
+  const by = hit ? hit.y : ball.y;
+  const dx = bx - p.x;
+  const dy = by - p.y;
   const d = Math.hypot(dx, dy);
-  const minD = cfg.bodyRadius + tuning.ball.radius;
+  const minD = hit ? Math.max(d, 0.05) + 0.01 : cfg.bodyRadius + tuning.ball.radius;
   if (d >= minD || d < 1e-6) return;
   const nx = dx / d, ny = dy / d;
   const relVx = ball.vx - p.vx;
@@ -166,8 +225,17 @@ export function bodyBlock(p, ball, world) {
     touched(p, ball, world);
     if (-vn > 1.5) events.push({ type: 'block', strength: -vn }); // not for a ball just pinched
   }
-  ball.x = p.x + nx * minD;
-  ball.y = p.y + ny * minD;
+  // Push the ball out of the body smoothly: it gets at least the player's speed away from
+  // him, and the position is corrected by at most a few centimetres per step.
+  const pn = p.vx * nx + p.vy * ny;
+  const bn = ball.vx * nx + ball.vy * ny;
+  if (bn < pn + 0.3) {
+    ball.vx += (pn + 0.3 - bn) * nx;
+    ball.vy += (pn + 0.3 - bn) * ny;
+  }
+  const push = Math.min(minD - d, 0.04);
+  ball.x += nx * push;
+  ball.y += ny * push;
 }
 
 // Trap mode: the player stands on the ball. The stick picks a direction; releasing fire
@@ -177,24 +245,31 @@ function stepTrap(p, joy, dir, world) {
   const cfg = tuning.player;
   p.vx = p.vy = 0;
 
-  // Ball knocked away (later: by an opponent) → back to normal play.
-  if (Math.hypot(ball.x - p.x, ball.y - p.y) > cfg.footReach + 0.6 || isAirborne(ball) || ball.lastTouch !== p) {
+  // Ball knocked away (by an opponent) or kicked up → back to normal play.
+  if (Math.hypot(ball.x - p.x, ball.y - p.y) > cfg.footReach + cfg.touchRadius + 0.3 || ball.z > 2.2 || ball.lastTouch !== p) {
     p.state = 'run';
     return;
   }
 
   if (dir) {
-    p.fx = dir.x;
-    p.fy = dir.y;
+    p.trapAim = dir;
     if (dot(dir, p.trapDir) > 0.7) p.flickTimer = 0.35;
   }
-  // Turn round the ball: move the player so the ball stays at the foot.
+  // Turn towards the chosen direction at a limited speed, walking round the ball in an arc
+  // (no jump to the other side), and keep the ball at the foot.
+  if (p.trapAim) turnTowards(p, p.trapAim, cfg.trapTurnRate * DT);
   const tx = ball.x - p.fx * cfg.footReach;
   const ty = ball.y - p.fy * cfg.footReach;
-  const k = 1 - Math.exp(-20 * DT);
-  p.x += (tx - p.x) * k;
-  p.y += (ty - p.y) * k;
-  stopBall(ball);
+  // Step there at most at a brisk walk, so the player never jumps.
+  const gx = tx - p.x, gy = ty - p.y;
+  const gd = Math.hypot(gx, gy);
+  const stepMax = 4 * DT;
+  if (gd > stepMax) { p.x += (gx / gd) * stepMax; p.y += (gy / gd) * stepMax; }
+  else { p.x = tx; p.y = ty; }
+  p.runPhase += Math.min(gd, stepMax) * 2.4; // small steps while turning
+  // Hold the ball; a ball that arrived high drops to the ground.
+  ball.vx = ball.vy = 0;
+  ball.spin = 0;
 
   if (!joy.fire) {
     p.state = 'run';
@@ -210,11 +285,26 @@ function stepTrap(p, joy, dir, world) {
       p.kickTimer = 0.25;
       world.events.push({ type: 'flick' });
     } else if (dir) {
+      p.fx = dir.x;
+      p.fy = dir.y;
       kick(p, ball, dir, tuning.kick.passSpeed, 0, p.passing, world, 'pass');
     } else {
+      if (p.trapAim) { p.fx = p.trapAim.x; p.fy = p.trapAim.y; }
       p.touchTimer = 0.25;
     }
+    p.trapAim = null;
   }
+}
+
+// Rotate the facing towards `target` (unit vector) by at most `maxStep` radians.
+function turnTowards(p, target, maxStep) {
+  const a = Math.atan2(p.fy, p.fx);
+  let d = Math.atan2(target.y, target.x) - a;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  const na = a + Math.sign(d) * Math.min(Math.abs(d), maxStep);
+  p.fx = Math.cos(na);
+  p.fy = Math.sin(na);
 }
 
 function stepJump(p, world) {
@@ -363,12 +453,6 @@ function keepInStadium(p) {
 function footPoint(p) {
   const r = tuning.player.footReach;
   return { x: p.x + p.fx * r, y: p.y + p.fy * r };
-}
-
-function stopBall(ball) {
-  ball.vx = ball.vy = ball.vz = 0;
-  ball.z = 0;
-  ball.spin = 0;
 }
 
 function touched(p, ball, world) {

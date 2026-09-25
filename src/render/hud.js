@@ -1,7 +1,7 @@
 import { tuning } from '../config.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-const HELP = 'Arrows: run   Space: fire (shoot / hold to trap and pass)   1–4: tactic   X: radar   R: new match   P: pause   G: tuning   I: info';
+const HELP = 'Arrows: run   Space: fire (shoot / hold to trap and pass)   1–4: tactic   X: radar   M: sound   R: new match   P: pause   G: tuning   I: info';
 
 export function drawHud(ctx, W, H, info) {
   ctx.save();

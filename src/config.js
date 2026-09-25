@@ -86,12 +86,16 @@ export const DEFAULTS = {
     accel: 38,            // how fast the player reaches top speed
     decel: 30,            // how fast the player stops when the stick is released
     footReach: 0.42,      // distance of the "foot point" in front of the body centre
-    touchRadius: 0.5,     // ball within this distance of the foot point = touch
+    touchRadius: 0.65,    // ball within this distance of the foot point = touch
     bodyRadius: 0.3,      // keep bodyRadius + ball radius < footReach, or a trapped ball touches the body
     dribbleFactor: 1.55,  // ball speed after a touch = player speed × this
     minPush: 2.2,         // minimum ball speed after a touch
     touchCooldown: 0.12,  // seconds between two touches
-    touchMaxHeight: 0.5,  // ball above this is not playable with the feet
+    trapTurnRate: 12,     // turning speed with the ball trapped (rad/s; 180° ≈ 0.26 s)
+    touchMaxHeight: 0.8,  // ball above this is not playable with the feet
+    controlRadius: 0.75,  // a ball coming this close to the body is controlled …
+    controlHeight: 1.9,   // … up to this height (shoulder / head) …
+    controlMaxSpeed: 20,  // … unless it is faster than this: then it deflects
     blockDamping: 0.25,   // ball speed kept when it bounces off a player's body
   },
   kick: {
@@ -158,6 +162,12 @@ export const DEFAULTS = {
     postRestitution: 0.6,
     netDamping: 0.15,     // speed kept when the ball hits the net
     resetDelay: 2.5,      // seconds until the kick-off after a goal
+  },
+  audio: {
+    mode: 'all',          // 'all', 'crowd' (crowd only) or 'off'
+    master: 0.8,
+    effects: 0.8,
+    crowd: 0.6,
   },
   camera: {
     viewHeight: 36,       // visible pitch height in metres (zoom)

@@ -4,6 +4,7 @@ import { createWorld, stepWorld, applyOptions, playerSpeed } from './world/world
 import { createMatch, gameTime } from './rules/match.js';
 import { setPiecePrompt } from './rules/setpieces.js';
 import { drawScanner } from './render/scanner.js';
+import { createAudio, SOUND_MODES } from './audio/audio.js';
 import { createCamera, updateCamera, snapCamera } from './render/camera.js';
 import { drawPitch, drawGoal } from './render/pitch.js';
 import { drawPlayer, drawBall } from './render/sprites.js';
@@ -16,11 +17,16 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d', { alpha: false });
 const input = createInput(window);
 const world = createWorld();
-const panel = createDevPanel(() => applyOptions(world));
+const panel = createDevPanel(() => {
+  applyOptions(world);
+  audio.applyVolumes();
+});
 const camera = createCamera(world.ball.x, world.ball.y);
+const audio = createAudio();
 
 // ?debug in the URL exposes the simulation in the browser console as window.webkick.
-if (new URLSearchParams(location.search).has('debug')) window.webkick = { world, tuning };
+if (new URLSearchParams(location.search).has('debug')) window.webkick = { world, tuning, audio };
+
 
 // Title screen: the match starts with the first key press, click or tap (browsers also need
 // this user action before they allow sound, from M5 on).
@@ -32,7 +38,9 @@ function start() {
   if (started) return;
   started = true;
   titleEl.classList.add('hidden');
+  audio.start();
   createMatch(world);
+  audio.whistle();
 }
 window.addEventListener('keydown', (e) => { if (!e.metaKey && !e.ctrlKey && !e.altKey) start(); });
 titleEl.addEventListener('pointerdown', start);
@@ -52,11 +60,22 @@ const ACTION_LABELS = {
   throwin: 'Throw-in', corner: 'Corner', goalkick: 'Goal kick', cross: 'Cross', clearance: 'Clearance',
 };
 
-input.onKey('KeyP', () => { paused = !paused; });
+input.onKey('KeyP', () => {
+  paused = !paused;
+  audio.setPaused(paused);
+});
 input.onKey('KeyG', () => panel.toggle());
 input.onKey('KeyI', () => { showDebug = !showDebug; });
 input.onKey('KeyR', () => commands.push('restart'));
 input.onKey('KeyX', () => { scannerSize = (scannerSize + 1) % 3; });
+input.onKey('KeyM', () => {
+  const a = tuning.audio;
+  a.mode = SOUND_MODES[(SOUND_MODES.indexOf(a.mode) + 1) % SOUND_MODES.length];
+  saveTuning();
+  audio.applyVolumes();
+  panel.refresh();
+  showAction({ all: 'Sound on', crowd: 'Crowd only', off: 'Sound off' }[a.mode]);
+});
 input.onKey('KeyL', () => commands.push('highball'));
 // Tactics of the human team (keys 1–4).
 TACTIC_NAMES.forEach((name, i) => input.onKey(`Digit${i + 1}`, () => {
@@ -73,6 +92,7 @@ function applyCommand(cmd) {
   if (cmd === 'restart') {
     createMatch(world);
     hud.bannerTime = 0;
+    audio.whistle();
   } else if (cmd === 'highball' && world.match.phase === 'play') {
     // A high ball dropping in front of the controlled player, to practise headers.
     Object.assign(ball, {
@@ -93,6 +113,7 @@ function showAction(text) {
 function step() {
   while (commands.length) applyCommand(commands.shift());
   const events = stepWorld(world, input.sample());
+  audio.handleEvents(events, world, camera);
   for (const e of events) {
     if (e.type === 'goal' && e.team !== undefined) {
       hud.banner = 'GOAL!';
@@ -146,6 +167,7 @@ function frame(now) {
       acc -= DT;
     }
   }
+  if (started && !paused) audio.update(world, realDt);
   render(paused ? 1 : acc / DT, realDt);
   requestAnimationFrame(frame);
 }

@@ -386,7 +386,9 @@ function executeTrap(p, lvl, ball, mode) {
   }
   if (ai.passPhase === 'aim') {
     ai.aimTimer -= DT;
-    if (ai.aimTimer <= 0) ai.passPhase = 'release';
+    // Release only when the player has finished turning to the new direction.
+    const aligned = p.fx * ai.dir.x + p.fy * ai.dir.y > 0.97;
+    if (ai.aimTimer <= 0 && aligned) ai.passPhase = 'release';
     return { dx: ai.dir.x ? Math.sign(ai.dir.x) : 0, dy: ai.dir.y ? Math.sign(ai.dir.y) : 0, fire: true };
   }
   if (mode === 'turn') {

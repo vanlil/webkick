@@ -82,7 +82,10 @@ export function matchPostStep(world, events) {
       break;
     case 'goal':
       m.timer -= DT;
-      if (m.timer <= 0) setupCentreStart(world, m.startTeam);
+      if (m.timer <= 0) {
+        setupCentreStart(world, m.startTeam);
+        events.push({ type: 'whistle', kind: 'short' });
+      }
       break;
     case 'halftime':
       m.timer -= DT;
@@ -91,6 +94,7 @@ export function matchPostStep(world, events) {
         m.half = 2;
         m.clock = 0;
         setupCentreStart(world, 1 - m.firstStart);
+        events.push({ type: 'whistle', kind: 'short' });
       }
       break;
     default:
