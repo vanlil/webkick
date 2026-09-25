@@ -1,6 +1,7 @@
 import { DT, PITCH, tuning, currentSurface } from '../config.js';
 import { tacticTarget, toWorld, toNorm } from './tactics.js';
 import { oppGoal, ownGoal } from '../world/team.js';
+import { fromBehind } from '../world/player.js';
 
 // The AI drives outfield players through the same virtual joystick as the human
 // (8 directions + fire), so CPU players follow exactly the same ball rules.
@@ -14,7 +15,7 @@ export function teamJoysticks(team, world, skip, out) {
   const lvl = team.level;
   const ball = perceivedBall(world, lvl.reaction);
   const attacking = world.possession === team.id;
-  const outfield = team.players.filter((p) => p.role !== 'keeper' && p !== skip);
+  const outfield = team.players.filter((p) => p.role !== 'keeper' && p !== skip && !p.sentOff);
 
   let chaser = null;
   let presser = null;
@@ -34,6 +35,11 @@ export function teamJoysticks(team, world, skip, out) {
 
   for (const p of outfield) {
     let joy;
+    // Own shot or free kick still in the air: bend it with aftertouch.
+    if (p.aftertouch && (p.aftertouch.kind === 'shot' || p.aftertouch.kind === 'freekick') && p.ai.useAftertouch) {
+      out.set(p, finishJoy(p, aftertouch(p, team, world.ball)));
+      continue;
+    }
     if (p === chaser) joy = chase(p, team, world, ball);
     else if (p === presser) joy = press(p, team, ball);
     else joy = position(p, team, ball, attacking, world);
@@ -109,7 +115,7 @@ function cornerSpot(p, team, sp) {
   // Who goes: attackers = forwards then midfielders; defenders = defenders then midfielders.
   const order = attacking ? ['fwd', 'mid'] : ['def', 'mid'];
   const takers = team.players
-    .filter((q) => q.role !== 'keeper' && q !== sp.taker && order.includes(q.role))
+    .filter((q) => q.role !== 'keeper' && !q.sentOff && q !== sp.taker && order.includes(q.role))
     .sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role) || a.index - b.index);
   const i = takers.indexOf(p);
   if (i < 0 || i >= spots.length) return null;
@@ -126,10 +132,29 @@ function position(p, team, ball, attacking, world) {
     const spot = cornerSpot(p, team, sp);
     if (spot) return steer(p, spot.x, spot.y, 0.6);
   }
+  if (sp && sp.type === 'freekick' && sp.stage !== 'dead') {
+    const wi = sp.wall ? sp.wall.indexOf(p) : -1;
+    if (wi >= 0) return steer(p, sp.wallSpots[wi].x, sp.wallSpots[wi].y, 0.15);
+    const hi = sp.helpers ? sp.helpers.indexOf(p) : -1;
+    if (hi >= 0) return steer(p, sp.helperSpots[hi].x, sp.helperSpots[hi].y, 0.3);
+  }
   const slot = p.index - 1;
   const n = toNorm(team.attackDir, ball.x, ball.y);
   const [tx, ty] = tacticTarget(team.tactic, slot, n.x, n.y, attacking);
   const w = toWorld(team.attackDir, tx, ty);
+  // Penalty: everybody except taker and keeper outside the box and the arc.
+  if (sp && sp.type === 'penalty' && sp.stage !== 'dead') {
+    const goalY = sp.y < PITCH.length / 2 ? 0 : PITCH.length;
+    const into = goalY === 0 ? 1 : -1;
+    const minDepth = PITCH.boxDepth + 1;
+    if ((w.y - goalY) * into < minDepth) w.y = goalY + into * minDepth;
+    const ax = w.x - sp.x, ay = w.y - sp.y, ad = Math.hypot(ax, ay);
+    if (ad < PITCH.circleRadius + 0.5) {
+      w.x = sp.x + (ax / (ad || 1)) * (PITCH.circleRadius + 0.5);
+      w.y = sp.y + (ay / (ad || 1)) * (PITCH.circleRadius + 0.5);
+    }
+    return steer(p, w.x, w.y, 1.0);
+  }
   // Opponent's set piece: keep the distance from the ball.
   if (sp && sp.team !== team.id && sp.stage !== 'dead') {
     const R = sp.type === 'throwin' ? 3 : PITCH.circleRadius;
@@ -156,9 +181,6 @@ function chase(p, team, world, ball) {
   const lvl = team.level;
   const real = world.ball;
 
-  // Own shot still in the air: bend it with aftertouch.
-  if (p.aftertouch && p.aftertouch.kind === 'shot' && p.ai.useAftertouch) return aftertouch(p, team, real);
-
   if (hasBall(p, real)) return withBall(p, team, world);
   p.ai.plan = null;
   p.ai.turning = false;
@@ -171,6 +193,26 @@ function chase(p, team, world, ball) {
     return { ...d, fire: true };
   }
 
+  const slide = trySlide(p, team, world, real);
+  if (slide) return slide;
+
+  // Chasing a dribbler from behind: a sensible defender does not go through the man (foul),
+  // he runs alongside and overtakes to reach the ball from the side.
+  const q = real.lastTouch;
+  if (q && q.team !== team.id && !real.heldBy && Math.hypot(q.x - real.x, q.y - real.y) < 1.2 &&
+      Math.hypot(q.x - p.x, q.y - p.y) < 2 && fromBehind(p, q)) {
+    if (p.ai.carefulFor !== q) {
+      p.ai.carefulFor = q;
+      p.ai.careful = world.rng.next() < team.level.tackleSense;
+    }
+    if (p.ai.careful) {
+      const side = (p.x - q.x) * -q.fy + (p.y - q.y) * q.fx >= 0 ? 1 : -1;
+      return steer(p, real.x + q.fx * 1.2 - q.fy * side * 1.1, real.y + q.fy * 1.2 + q.fx * side * 1.1, 0);
+    }
+  } else {
+    p.ai.carefulFor = null;
+  }
+
   const target = intercept(p, ball);
   // Arrive on the goal side of the ball's path, so the touch pushes it towards the goal.
   const g = oppGoal(team);
@@ -181,6 +223,24 @@ function chase(p, team, world, ball) {
     ty -= ((g.y - target.y) / gd) * 0.35;
   }
   return steer(p, tx, ty, 0);
+}
+
+// Sliding tackle on an opponent who has the ball at his feet. Willingness depends on the
+// level; tackles from behind (fouls) are avoided by sensible defenders, less so by aggressive ones.
+function trySlide(p, team, world, ball) {
+  const lvl = team.level;
+  const q = ball.lastTouch;
+  if (p.state !== 'run' || !q || q.team === team.id || ball.heldBy || ball.z > 0.5) return null;
+  if (Math.hypot(q.x - ball.x, q.y - ball.y) > 2) return null;
+  const bx = ball.x + ball.vx * 0.25, by = ball.y + ball.vy * 0.25; // where the ball will be
+  const d = Math.hypot(bx - p.x, by - p.y);
+  if (d < 1.0 || d > 3.0) return null;
+  const dx = (bx - p.x) / d, dy = (by - p.y) / d;
+  const behind = dx * q.fx + dy * q.fy > 0.5 && (q.x - p.x) * q.fx + (q.y - p.y) * q.fy > 0;
+  const willing = behind ? p.aggression * (1 - lvl.tackleSense) : 1;
+  if (world.rng.next() > lvl.slide * willing * 1.2 * DT) return null;
+  const st = toSector(Math.atan2(dy, dx));
+  return { dx: st.dx, dy: st.dy, fire: true };
 }
 
 function hasBall(p, ball) {
@@ -319,7 +379,7 @@ function bestPass(p, team, world, g, opponents) {
   const goalDir = norm(g.x - ball.x, g.y - ball.y);
   let best = null, bestScore = -Infinity;
   for (const m of team.players) {
-    if (m === p || m.role === 'keeper') continue;
+    if (m === p || m.role === 'keeper' || m.sentOff) continue;
     const mx = m.x + m.vx * 0.5, my = m.y + m.vy * 0.5;
     const vx = mx - ball.x, vy = my - ball.y;
     const d = Math.hypot(vx, vy);

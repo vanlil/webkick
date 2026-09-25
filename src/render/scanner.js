@@ -39,6 +39,7 @@ export function drawScanner(ctx, W, H, world, camera, size) {
   const r = size === 2 ? 3.2 : 2.4;
   const active = world.human && world.human.player;
   for (const p of world.players) {
+    if (p.sentOff) continue;
     ctx.fillStyle = p.kit.shirt;
     ctx.beginPath();
     ctx.arc(px(p.x), py(p.y), r, 0, Math.PI * 2);

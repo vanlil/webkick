@@ -73,15 +73,18 @@ export function stepWorld(world, humanJoy) {
   const active = world.human ? world.human.player : null;
   for (const team of world.teams) teamJoysticks(team, world, active, joys);
   if (active) {
-    // While the human's keeper has the ball, the stick belongs to him (clearance).
+    // While the human's keeper has the ball, or faces a penalty, the stick belongs to him.
     const keeper = world.teams[world.human.team].players[0];
-    joys.set(active, keeper.state === 'hold' ? IDLE : humanJoy);
+    const sp = world.match.setPiece;
+    const keeperPenalty = sp && sp.type === 'penalty' && sp.team !== world.human.team;
+    joys.set(active, keeper.state === 'hold' || keeperPenalty ? IDLE : humanJoy);
   }
   matchPreStep(world, humanJoy, joys);
 
   // Players nearest to the ball act first: they win a contested ball.
   const order = world.players.slice().sort((a, b) => dist2(a, ball) - dist2(b, ball));
   for (const p of order) {
+    if (p.sentOff) continue;
     if (p.role === 'keeper') stepKeeper(p, world.teams[p.team], world);
     else stepPlayer(p, joys.get(p) || IDLE, world);
   }
@@ -113,7 +116,7 @@ function switchHumanPlayer(world) {
   let best = cur, bestD = Math.hypot(cur.x - tx, cur.y - ty);
   const curD = bestD;
   for (const p of team.players) {
-    if (p.role === 'keeper') continue;
+    if (p.role === 'keeper' || p.sentOff) continue;
     const d = Math.hypot(p.x - tx, p.y - ty);
     if (d < bestD) { bestD = d; best = p; }
   }
@@ -130,6 +133,7 @@ function separatePlayers(players) {
   for (let i = 0; i < players.length; i++) {
     for (let j = i + 1; j < players.length; j++) {
       const a = players[i], b = players[j];
+      if (a.sentOff || b.sentOff) continue;
       const dx = b.x - a.x, dy = b.y - a.y;
       const d = Math.hypot(dx, dy);
       if (d >= minD || d < 1e-6) continue;

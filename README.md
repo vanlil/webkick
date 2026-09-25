@@ -17,11 +17,10 @@ Use `-p <port>` for another port.
 
 ## Status
 
-Milestone 5 (sound): crowd murmur that rises near the goals, goal roar, "oooh" on near
-misses, applause, kick and bounce sounds, post clang, net swish and the referee's whistle —
-all generated in code with the Web Audio API (no sound files). Earlier: full matches with
-halves, set pieces, radar and title screen; 11 against 11 with tactics, goalkeepers and a CPU
-opponent (easy / medium / hard, in the tuning panel).
+Milestone 6 (contact): sliding tackles, fouls, 24 referees with their own strictness and
+eyesight, yellow and red cards, free kicks with a wall, penalties and an optional penalty
+shoot-out. Earlier: sound, full matches with halves and set pieces, 11 against 11 with tactics,
+goalkeepers and a CPU opponent (easy / medium / hard, in the tuning panel).
 
 ## Controls
 
@@ -40,6 +39,10 @@ opponent (easy / medium / hard, in the tuning panel).
 | 1 – 4 | Tactic of your team: 4-4-2, 4-3-3, 4-2-4, 5-3-2 |
 | **Throw-in** | Hold Space for distance, arrow for direction; taken automatically if you wait |
 | **Corner** | ←/→ power (9 steps), Space; hold Space again for height; ←/→ during the run-up for bias; then aftertouch |
+| Space while an opponent has the ball at his feet | Sliding tackle. Ball first = clean; the man first, or from behind = foul |
+| **Free kick** | Hold Space for height (power is random). Arrow at the kick: diagonal forward = slight bend, sideways = more bend, diagonal back = pass to a team-mate, forward = step over. Then aftertouch |
+| **Penalty** | A pointer sweeps across the goal: Space fixes the direction, hold for height (quick tap = low) |
+| **Penalty against you** | Arrow + Space: your keeper dives (sideways = that side, up = high, down = low); hold longer for a bigger dive |
 | **Goal kick / keeper has the ball** | Arrow chooses the kick (forward = strong, centre = medium, back = weak; sideways = angle), Space kicks |
 | X | Radar: small / large / off |
 | M | Sound: all / crowd only / off (volumes in the tuning panel) |

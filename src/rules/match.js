@@ -2,6 +2,7 @@ import { DT, PITCH, tuning } from '../config.js';
 import { ownGoal } from '../world/team.js';
 import { tacticTarget, toWorld } from '../ai/tactics.js';
 import { startSetPiece, stepSetPiece } from './setpieces.js';
+import { pickReferee, judgeFoul, inPenaltyArea } from './referee.js';
 
 // Match phases:
 //   'start'    teams in their halves; the clock starts when the kicking team touches the ball
@@ -9,6 +10,7 @@ import { startSetPiece, stepSetPiece } from './setpieces.js';
 //   'setpiece' throw-in, corner or goal kick (setpieces.js)
 //   'goal'     celebration, then kick-off by the team that conceded
 //   'halftime' pause, then the teams change sides
+//   'shootout' penalty shoot-out after a draw (option); 'shootoutKick' while a kick is on
 //   'fulltime'
 
 const IDLE = { dx: 0, dy: 0, fire: false, firePressed: false, fireReleased: false };
@@ -18,7 +20,14 @@ const HALF_GAME_SECONDS = 45 * 60;
 export function createMatch(world) {
   const first = world.rng.next() < 0.5 ? 0 : 1; // coin toss
   world.score[0] = world.score[1] = 0;
-  world.match = { phase: 'start', half: 1, clock: 0, timer: 0, firstStart: first, startTeam: first, startSeq: 0, setPiece: null };
+  world.teams[0].attackDir = -1;
+  world.teams[1].attackDir = 1;
+  for (const p of world.players) {
+    p.yellow = 0;
+    p.sentOff = false;
+  }
+  world.referee = pickReferee(world.rng);
+  world.match = { phase: 'start', half: 1, clock: 0, timer: 0, firstStart: first, startTeam: first, startSeq: 0, setPiece: null, shootout: null };
   setupCentreStart(world, first);
 }
 
@@ -36,7 +45,7 @@ export function matchPreStep(world, humanJoy, joys) {
     // Everyone waits except the kicking team's striker (the CPU's after a short pause).
     // The human may move his player; clampCentreStart keeps him in his half.
     m.timer -= DT;
-    const striker = world.teams[m.startTeam].players[10];
+    const striker = strikerOf(world.teams[m.startTeam]);
     for (const p of world.players) {
       if (p === striker) {
         if (!world.teams[p.team].human && m.timer > 0) joys.set(p, IDLE);
@@ -47,7 +56,7 @@ export function matchPreStep(world, humanJoy, joys) {
     }
   } else if (m.phase === 'setpiece') {
     stepSetPiece(world, humanJoy, joys);
-  } else if (m.phase === 'halftime' || m.phase === 'fulltime') {
+  } else if (m.phase === 'halftime' || m.phase === 'fulltime' || m.phase === 'shootout' || m.phase === 'shootoutKick') {
     for (const p of world.players) joys.set(p, IDLE);
   }
 }
@@ -78,7 +87,17 @@ export function matchPostStep(world, events) {
           return;
         }
       }
+      for (const e of events) {
+        if (e.type === 'foul' && foulCalled(world, e, events)) return;
+      }
       checkOutOfPlay(world, events);
+      break;
+    case 'shootoutKick':
+      stepShootoutKick(world, events);
+      break;
+    case 'shootout':
+      m.timer -= DT;
+      if (m.timer <= 0) nextPenalty(world, events);
       break;
     case 'goal':
       m.timer -= DT;
@@ -122,10 +141,122 @@ function endHalf(world, events) {
     m.phase = 'halftime';
     m.timer = tuning.setpiece.halfTimePause;
     events.push({ type: 'halftime' });
+  } else if (tuning.game.shootout && world.score[0] === world.score[1]) {
+    startShootout(world, events);
   } else {
     m.phase = 'fulltime';
     events.push({ type: 'fulltime' });
   }
+}
+
+// --- Fouls ----------------------------------------------------------------------------------
+
+// The referee judges a foul. Seen: whistle, maybe a card, then a free kick or a penalty.
+// Not seen: play on. Returns true if play was stopped.
+function foulCalled(world, e, events) {
+  const verdict = judgeFoul(world, e);
+  e.seen = verdict.seen;
+  if (!verdict.seen) return false;
+  const offender = e.by;
+  const offenders = world.teams[offender.team];
+  if (verdict.card) {
+    if (verdict.card === 'yellow') offender.yellow = (offender.yellow || 0) + 1;
+    events.push({ type: 'card', color: verdict.card, player: offender });
+    if (verdict.card === 'red') sendOff(world, offender);
+  }
+  const victims = 1 - offender.team;
+  if (inPenaltyArea(offenders, e.x, e.y)) {
+    startSetPiece(world, 'penalty', victims, 0, 0, events);
+  } else {
+    const x = Math.min(PITCH.width - 0.5, Math.max(0.5, e.x));
+    const y = Math.min(PITCH.length - 0.5, Math.max(0.5, e.y));
+    startSetPiece(world, 'freekick', victims, x, y, events);
+  }
+  world.match.setPiece.victim = e.victim;
+  return true;
+}
+
+// A sent-off player leaves the pitch; he waits at the side of the pitch.
+function sendOff(world, p) {
+  p.sentOff = true;
+  p.state = 'off';
+  p.vx = p.vy = 0;
+  p.x = -5.2;
+  p.y = PITCH.length / 2 + (p.team === 0 ? 4 : -4) + p.index * 0.4;
+  p.prev.x = p.x;
+  p.prev.y = p.y;
+  if (world.human && world.human.player === p) {
+    const mates = world.teams[p.team].players.filter((q) => q.role !== 'keeper' && !q.sentOff);
+    mates.sort((a, b) => Math.hypot(a.x - world.ball.x, a.y - world.ball.y) - Math.hypot(b.x - world.ball.x, b.y - world.ball.y));
+    if (mates.length) world.human.player = mates[0];
+  }
+}
+
+// --- Penalty shoot-out ----------------------------------------------------------------------
+// 5 penalties each, alternately, at the top goal; then sudden death.
+
+function startShootout(world, events) {
+  const m = world.match;
+  const first = world.rng.next() < 0.5 ? 0 : 1;
+  m.shootout = { goals: [0, 0], kicks: [0, 0], turn: first, order: [0, 0], winner: null };
+  m.phase = 'shootout';
+  m.timer = 2;
+  events.push({ type: 'shootout' });
+}
+
+function nextPenalty(world, events) {
+  const m = world.match;
+  const so = m.shootout;
+  const shooters = world.teams[so.turn];
+  const keepers = world.teams[1 - so.turn];
+  // The shooting team attacks the top goal, so the defending keeper stands there.
+  shooters.attackDir = -1;
+  keepers.attackDir = 1;
+  // Everyone else waits in the centre circle.
+  for (const t of world.teams) {
+    t.players.forEach((p, i) => {
+      if (p.sentOff) return;
+      const a = (i / 11) * Math.PI * 2 + (t.id ? 0.15 : 0);
+      resetPlayer(p, PITCH.width / 2 + Math.cos(a) * 6, PITCH.length / 2 + Math.sin(a) * 6, t.attackDir);
+    });
+  }
+  const outfield = shooters.players.filter((p) => p.role !== 'keeper' && !p.sentOff);
+  const taker = outfield[(outfield.length - 1) - (so.order[so.turn]++ % outfield.length)];
+  startSetPiece(world, 'penalty', so.turn, 0, 0, events, { shootout: true, taker });
+}
+
+// Watch the kick: a goal, or no goal once the ball is dead (caught, out, stopped) or after 3 s.
+function stepShootoutKick(world, events) {
+  const m = world.match;
+  const so = m.shootout;
+  const { ball } = world;
+  m.timer -= DT;
+  const goal = events.some((e) => e.type === 'goal');
+  const over = goal || m.timer <= 0 || ball.heldBy || ball.y < -1 || ball.x < -1 || ball.x > PITCH.width + 1 ||
+    (Math.hypot(ball.vx, ball.vy) < 0.5 && m.timer < 2.2);
+  if (!over) return;
+  if (goal) so.goals[so.turn]++;
+  so.kicks[so.turn]++;
+  events.push({ type: goal ? 'shootoutGoal' : 'shootoutMiss', team: so.turn });
+
+  const [g0, g1] = so.goals, [k0, k1] = so.kicks;
+  let winner = null;
+  if (k0 <= 5 && k1 <= 5) {
+    // Decided early if one team can no longer catch up.
+    if (g0 > g1 + (5 - k1)) winner = 0;
+    else if (g1 > g0 + (5 - k0)) winner = 1;
+  }
+  if (winner === null && k0 === k1 && k0 >= 5 && g0 !== g1) winner = g0 > g1 ? 0 : 1;
+  if (winner !== null) {
+    so.winner = winner;
+    m.phase = 'fulltime';
+    Object.assign(ball, { vx: 0, vy: 0, vz: 0, heldBy: ball.heldBy || HOLD });
+    events.push({ type: 'whistle', kind: 'long' }, { type: 'fulltime' });
+    return;
+  }
+  so.turn = 1 - so.turn;
+  m.phase = 'shootout';
+  m.timer = 1.5;
 }
 
 // Ball completely over a line: throw-in, corner or goal kick.
@@ -156,7 +287,8 @@ function clampCentreStart(world) {
   for (const team of world.teams) {
     const side = -team.attackDir; // own half: y > centre for side +1
     for (const p of team.players) {
-      if (team.id === m.startTeam && p === team.players[10]) continue;
+      if (p.sentOff) continue;
+      if (team.id === m.startTeam && p === strikerOf(team)) continue;
       if ((p.y - cy) * side < 0.5) p.y = cy + 0.5 * side;
       if (team.id !== m.startTeam) {
         const dx = p.x - cx, dy = p.y - cy;
@@ -194,6 +326,7 @@ export function setupCentreStart(world, teamId) {
     team.chaser = null;
     const kicking = team.id === teamId;
     for (const p of team.players) {
+      if (p.sentOff) continue;
       let x, y;
       if (p.role === 'keeper') {
         const g = ownGoal(team);
@@ -214,14 +347,21 @@ export function setupCentreStart(world, teamId) {
     if (kicking) {
       // A forward stands just behind the ball, facing the opponent's goal; slightly to the
       // side, so he does not hide the ball in the 3/4 view.
-      const striker = team.players[10];
+      const striker = strikerOf(team);
       resetPlayer(striker, ball.x - 0.5, ball.y - team.attackDir * 1.1, team.attackDir);
     }
   }
   if (world.human) {
     const t = world.teams[world.human.team];
-    world.human.player = t.id === teamId ? t.players[10] : t.players[9];
+    const own = t.players.filter((p) => p.role !== 'keeper' && !p.sentOff);
+    world.human.player = t.id === teamId ? strikerOf(t) : own[own.length - 2] || own[0];
   }
+}
+
+// The kick-off taker: the last outfield player still on the pitch (a forward).
+function strikerOf(team) {
+  for (let i = team.players.length - 1; i > 0; i--) if (!team.players[i].sentOff) return team.players[i];
+  return team.players[0];
 }
 
 function resetPlayer(p, x, y, attackDir) {

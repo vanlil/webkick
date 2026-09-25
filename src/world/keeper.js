@@ -26,6 +26,7 @@ export function stepKeeper(k, team, world) {
 
   switch (k.state) {
     case 'hold': stepHold(k, team, world, goal); break;
+    case 'penalty': stepPenalty(k, world, goal); break;
     case 'dive': stepDive(k, world); break;
     case 'down': stepDown(k); break;
     default: stepGuard(k, team, world, goal);
@@ -109,8 +110,41 @@ function shouldRush(k, team, world) {
   return kt < best - 0.15;
 }
 
+// Facing a penalty: wait on the line until the kick; if he did not dive, back to normal
+// shortly after.
+function stepPenalty(k, world, goal) {
+  k.vx = k.vy = 0;
+  k.x = goal.x;
+  k.y = goal.y + goal.into * 0.3;
+  k.fx = 0;
+  k.fy = goal.into;
+  if (world.match && world.match.phase !== 'setpiece') {
+    k.penaltyTimer = (k.penaltyTimer || 0) + DT;
+    if (k.penaltyTimer > 1) {
+      k.state = 'guard';
+      k.penaltyTimer = 0;
+    }
+  }
+}
+
+// Penalty dive: side −1/0/1 (0 = stay in the middle), height of the jump in metres.
+// `speed` (optional): lateral dive speed, so a CPU keeper arrives at his chosen point.
+// A human's dive stops extending when he lets go of fire ("longer press = bigger move").
+export function penaltyDive(k, side, height, human, speed = tuning.keeper.diveSpeed) {
+  const kp = tuning.keeper;
+  k.state = 'dive';
+  k.stateTimer = kp.diveTime;
+  k.diveDir = side;
+  k.vx = side * Math.min(speed, kp.diveSpeed * 1.2);
+  k.vy = 0;
+  k.diveHeight = height;
+  k.humanDive = human;
+  k.penaltyTimer = 0;
+}
+
 function stepDive(k, world) {
   const kp = tuning.keeper;
+  if (k.humanDive && world.humanJoy && !world.humanJoy.fire) k.vx *= 0.75;
   k.stateTimer -= DT;
   const t = 1 - Math.max(0, k.stateTimer) / kp.diveTime;
   k.z = k.diveHeight * Math.sin(Math.PI * Math.min(1, t * 1.2));
@@ -120,6 +154,7 @@ function stepDive(k, world) {
     k.state = 'down';
     k.stateTimer = kp.downTime;
     k.z = 0;
+    k.humanDive = false;
   }
 }
 
@@ -138,17 +173,21 @@ function stepDown(k) {
 function tryCatch(k, team, world, goal) {
   const { ball, rng, events } = world;
   const kp = tuning.keeper;
-  if (k.state === 'down' || k.touchTimer > 0 || !canTouch(k, ball, world)) return;
+  // Just after landing from a dive, the outstretched keeper can still push the ball away.
+  const landed = k.state === 'down' && k.stateTimer > kp.downTime - 0.35;
+  if ((k.state === 'down' && !landed) || k.touchTimer > 0 || !canTouch(k, ball, world)) return;
   if (!inOwnBox(team, ball.x, ball.y) || ball.z > kp.catchHeight) return;
-  const diving = k.state === 'dive';
-  const hx = k.x + (diving ? k.diveDir * 0.6 : 0);
+  const diving = k.state === 'dive' || landed;
+  const hx = k.x + (diving ? (k.diveDir || 0) * 0.6 : 0);
   const reach = diving ? kp.diveReach : kp.reach;
   if (Math.hypot(ball.x - hx, ball.y - k.y) > reach) return;
   if (!diving && ball.z > 2.3) return;
+  if (landed && ball.z > 1) return;
 
   const speed = Math.hypot(ball.vx, ball.vy, ball.vz);
   const own = ball.lastTouch && ball.lastTouch.team === team.id;
-  const pCatch = own ? 1 : Math.min(0.97, Math.max(0.15, team.level.keeperSkill * 1.15 - speed / 45 - (diving ? 0.1 : 0)));
+  let pCatch = own ? 1 : Math.min(0.97, Math.max(0.15, team.level.keeperSkill * 1.15 - speed / 45 - (diving ? 0.1 : 0)));
+  if (landed) pCatch = 0; // lying on the ground: parry only
   ball.touchSeq++;
   ball.lastTouch = k;
   ball.touchStep = world.step;
@@ -257,7 +296,7 @@ function pickTarget(k, team, world) {
   let bestScore = -Infinity;
   const opponents = world.teams.find((t) => t.id !== team.id).players;
   for (const p of team.players) {
-    if (p === k) continue;
+    if (p === k || p.sentOff) continue;
     const d = Math.hypot(p.x - k.x, p.y - k.y);
     if (d < 8) continue;
     let free = 12;

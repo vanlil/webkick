@@ -139,6 +139,12 @@ export function clang(ctx, out, t, noise, strength) {
   noiseBurst(ctx, out, t, noise, { freq: 2500, q: 0.8, dur: 0.02, vol: 0.4 * s });
 }
 
+// Sliding tackle: a swish over the grass.
+export function slide(ctx, out, t, noise) {
+  noiseBurst(ctx, out, t, noise, { freq: 900, q: 0.4, dur: 0.35, vol: 0.28, type: 'lowpass' });
+  noiseBurst(ctx, out, t + 0.02, noise, { freq: 2400, q: 0.6, dur: 0.25, vol: 0.08 });
+}
+
 // Ball in the net: a short swish.
 export function net(ctx, out, t, noise) {
   noiseBurst(ctx, out, t, noise, { freq: 3200, q: 0.5, dur: 0.35, vol: 0.22 });

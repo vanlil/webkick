@@ -126,6 +126,27 @@ export function createAudio() {
       case 'whistle':
         synth.whistle(ctx, effects, t, noise, e.kind === 'long');
         break;
+      case 'slide':
+        synth.slide(ctx, here(), t, noise);
+        break;
+      case 'tackle':
+        synth.kick(ctx, here(), t, noise, 0.5);
+        break;
+      case 'foul':
+        synth.ooh(ctx, crowdBus, t + 0.05, pink, 0.7); // the crowd saw it, even if the referee did not
+        break;
+      case 'card':
+        synth.ooh(ctx, crowdBus, t + 0.2, pink, e.color === 'red' ? 1.2 : 0.8);
+        break;
+      case 'penaltykick':
+        synth.kick(ctx, here(), t, noise, 1);
+        break;
+      case 'shootoutGoal':
+        synth.roar(ctx, crowdBus, t, pink, 0.8);
+        break;
+      case 'shootoutMiss':
+        synth.ooh(ctx, crowdBus, t, pink, 1);
+        break;
       case 'halftime':
       case 'fulltime':
         synth.applause(ctx, crowdBus, t + 0.8, claps, 0.7, 4);

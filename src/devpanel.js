@@ -16,6 +16,8 @@ export function createDevPanel(onChange = () => {}) {
   match.add(tuning.game, 'humanTactic', TACTIC_NAMES).name('your tactic (1–4)');
   match.add(tuning.game, 'cpuTactic', TACTIC_NAMES).name('CPU tactic');
   match.add(tuning.game, 'halfMinutes', HALF_MINUTES).name('minutes per half');
+  match.add(tuning.game, 'referee').name('referee (fouls)');
+  match.add(tuning.game, 'shootout').name('penalties if draw');
 
   const game = gui.addFolder('Game');
   game.add(tuning.game, 'speed', { normal: 1, reduced: 0.75, slow: 0.5 });

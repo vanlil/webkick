@@ -41,6 +41,7 @@ function start() {
   audio.start();
   createMatch(world);
   audio.whistle();
+  showAction(`Referee: ${world.referee.name}`, 3);
 }
 window.addEventListener('keydown', (e) => { if (!e.metaKey && !e.ctrlKey && !e.altKey) start(); });
 titleEl.addEventListener('pointerdown', start);
@@ -58,6 +59,8 @@ const ACTION_LABELS = {
   shot: 'Shot', pass: 'Pass', lob: 'Lob', header: 'Header', overhead: 'Overhead kick',
   flick: 'Flick', post: 'Post!', bar: 'Crossbar!', save: 'Save!', catch: 'Caught',
   throwin: 'Throw-in', corner: 'Corner', goalkick: 'Goal kick', cross: 'Cross', clearance: 'Clearance',
+  tackle: 'Tackle', freekick: 'Free kick', penalty: 'Penalty!', shootout: 'Penalty shoot-out',
+  shootoutGoal: 'Scored!', shootoutMiss: 'Missed!',
 };
 
 input.onKey('KeyP', () => {
@@ -93,6 +96,7 @@ function applyCommand(cmd) {
     createMatch(world);
     hud.bannerTime = 0;
     audio.whistle();
+    showAction(`Referee: ${world.referee.name}`, 3);
   } else if (cmd === 'highball' && world.match.phase === 'play') {
     // A high ball dropping in front of the controlled player, to practise headers.
     Object.assign(ball, {
@@ -105,9 +109,16 @@ function applyCommand(cmd) {
   }
 }
 
-function showAction(text) {
+function showAction(text, seconds = 1.5) {
   hud.action = text;
-  hud.actionTime = 1.5;
+  hud.actionTime = seconds;
+}
+
+function banner(text, seconds, color) {
+  hud.banner = text;
+  hud.bannerTime = seconds;
+  hud.bannerAge = 0;
+  hud.bannerColor = color;
 }
 
 function step() {
@@ -116,17 +127,16 @@ function step() {
   audio.handleEvents(events, world, camera);
   for (const e of events) {
     if (e.type === 'goal' && e.team !== undefined) {
-      hud.banner = 'GOAL!';
-      hud.bannerTime = tuning.goal.resetDelay;
-      hud.bannerAge = 0;
+      banner('GOAL!', tuning.goal.resetDelay);
     } else if (e.type === 'halftime') {
-      hud.banner = 'HALF TIME';
-      hud.bannerTime = tuning.setpiece.halfTimePause;
-      hud.bannerAge = 0;
+      banner('HALF TIME', tuning.setpiece.halfTimePause);
     } else if (e.type === 'fulltime') {
-      hud.banner = 'FULL TIME';
-      hud.bannerTime = Infinity;
-      hud.bannerAge = 0;
+      banner('FULL TIME', Infinity);
+    } else if (e.type === 'card') {
+      banner(e.color === 'red' ? 'RED CARD' : 'YELLOW CARD', 2, e.color === 'red' ? '#ff4d4d' : '#ffe14d');
+      showAction(`#${e.player.number} ${world.teams[e.player.team].name}${e.color === 'red' ? ' is sent off' : ''}`, 2);
+    } else if (e.type === 'foul' && e.seen) {
+      showAction(`Foul by #${e.by.number} ${world.teams[e.by.team].name}`);
     } else if (ACTION_LABELS[e.type]) {
       showAction(ACTION_LABELS[e.type] + (e.speed ? `  ${Math.round(e.speed * 3.6)} km/h` : ''));
     }
@@ -197,6 +207,7 @@ function render(alpha, realDt) {
   const drawables = [{ y: by, draw: () => drawBall(ctx, view, ball, bx, by, bz) }];
   const active = world.human && world.human.player;
   for (const p of world.players) {
+    if (p.sentOff) continue;
     const px = lerp(p.prev.x, p.x, alpha);
     const py = lerp(p.prev.y, p.y, alpha);
     if (px < minX || px > maxX || py < minY || py > maxY) continue;
@@ -218,10 +229,21 @@ function render(alpha, realDt) {
     score: world.score,
     clock: gameTime(world.match),
     half: world.match.half,
-    prompt: world.match.phase === 'fulltime' ? { text: 'Press R for a new match' } : setPiecePrompt(world),
+    prompt: world.match.phase === 'fulltime' ? { text: fullTimeText() } : setPiecePrompt(world),
+    shootout: world.match.shootout,
     hud,
   });
   drawScanner(ctx, W, H, world, camera, scannerSize);
+}
+
+function fullTimeText() {
+  const so = world.match.shootout;
+  const t = world.teams;
+  if (so && so.winner !== null) {
+    const w = so.winner;
+    return `${t[w].name} win ${so.goals[w]}–${so.goals[1 - w]} on penalties — press R for a new match`;
+  }
+  return 'Press R for a new match';
 }
 
 snapCamera(camera, PITCH.width / 2, PITCH.length / 2);

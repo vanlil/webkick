@@ -40,14 +40,16 @@ const PITCH_TYPES = {
   bumpy:      { rollFriction: 1.8, rollDrag: 0.40, restitution: 0.55, bounceGrip: 0.85, airDragMul: 1.0, bumpiness: 0.45, staminaMul: 1.1 },
 };
 
-// CPU difficulty. reaction: how old the ball information is that the AI acts on (s);
+// CPU difficulty. slide: willingness to make sliding tackles; tackleSense: how well the AI
+// avoids tackles from behind (fouls).
+// reaction: how old the ball information is that the AI acts on (s);
 // decision: time between decisions when on the ball (s); aftertouch: chance to bend a shot;
 // chasers: players going for the ball (2 = one presses the ball carrier);
 // skill/pace: base attributes of the players; keeper*: goalkeeper reaction and skill.
 export const AI_LEVELS = {
-  easy:   { reaction: 0.40, decision: 0.45, shootRange: 17, aftertouch: 0.0, passAim: 0.25, chasers: 1, headers: false, skill: 0.60, pace: 0.92, keeperReaction: 0.32, keeperSkill: 0.55 },
-  medium: { reaction: 0.22, decision: 0.28, shootRange: 22, aftertouch: 0.5, passAim: 0.15, chasers: 2, headers: true,  skill: 0.80, pace: 0.97, keeperReaction: 0.22, keeperSkill: 0.75 },
-  hard:   { reaction: 0.10, decision: 0.15, shootRange: 27, aftertouch: 1.0, passAim: 0.08, chasers: 2, headers: true,  skill: 0.95, pace: 1.02, keeperReaction: 0.14, keeperSkill: 0.90 },
+  easy:   { reaction: 0.40, decision: 0.45, shootRange: 17, aftertouch: 0.0, passAim: 0.25, chasers: 1, headers: false, skill: 0.60, pace: 0.92, keeperReaction: 0.32, keeperSkill: 0.55, slide: 0.4, tackleSense: 0.3 },
+  medium: { reaction: 0.22, decision: 0.28, shootRange: 22, aftertouch: 0.5, passAim: 0.15, chasers: 2, headers: true,  skill: 0.80, pace: 0.97, keeperReaction: 0.22, keeperSkill: 0.75, slide: 0.7, tackleSense: 0.6 },
+  hard:   { reaction: 0.10, decision: 0.15, shootRange: 27, aftertouch: 1.0, passAim: 0.08, chasers: 2, headers: true,  skill: 0.95, pace: 1.02, keeperReaction: 0.14, keeperSkill: 0.90, slide: 1.0, tackleSense: 0.85 },
 };
 
 // The human team: fixed attributes; its CPU-controlled keeper and team-mates use these.
@@ -72,6 +74,8 @@ export const DEFAULTS = {
     humanTactic: '4-4-2',
     cpuTactic: '4-4-2',
     halfMinutes: 5,
+    referee: true,        // off = no fouls are given
+    shootout: false,      // penalty shoot-out if the match ends in a draw
   },
   ball: {
     gravity: 9.81,
@@ -92,6 +96,11 @@ export const DEFAULTS = {
     minPush: 2.2,         // minimum ball speed after a touch
     touchCooldown: 0.12,  // seconds between two touches
     trapTurnRate: 12,     // turning speed with the ball trapped (rad/s; 180° ≈ 0.26 s)
+    slideSpeed: 8.5,      // minimum speed at the start of a sliding tackle
+    slideTime: 0.55,
+    slideFriction: 9,     // deceleration while sliding (m/s²)
+    slideRecover: 0.45,   // time to get up after a slide
+    fallTime: 1.2,        // a fouled player lies on the ground this long
     touchMaxHeight: 0.8,  // ball above this is not playable with the feet
     controlRadius: 0.75,  // a ball coming this close to the body is controlled …
     controlHeight: 1.9,   // … up to this height (shoulder / head) …
@@ -149,6 +158,13 @@ export const DEFAULTS = {
     cornerMax: 50,
     runupTime: 0.6,
     halfTimePause: 3,
+  },
+  freekick: {
+    powerMin: 17,         // free kick power is random between these (m/s)
+    powerMax: 25,
+    wallDistance: 9.15,
+    penaltySpeed: 24,
+    pointerPeriod: 1.1,   // seconds for the penalty direction pointer to sweep across and back
   },
   ai: {
     passMinDist: 7,

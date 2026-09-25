@@ -33,7 +33,7 @@ export function createTeam({ id, name, human, attackDir, kit, keeperKit, tactic,
     p.index = i;
     p.number = i + 1;
     p.role = isKeeper ? 'keeper' : roles[i - 1];
-    p.variation = { pace: rng.range(-0.05, 0.05), skill: rng.range(-0.08, 0.08) };
+    p.variation = { pace: rng.range(-0.05, 0.05), skill: rng.range(-0.08, 0.08), aggression: rng.range(0.2, 0.95) };
     p.ai = { lastSector: null, prevFire: false, plan: null, decisionTimer: 0 };
     team.players.push(p);
   }
@@ -55,6 +55,7 @@ export function applyAttributes(team) {
     p.shooting = clamp(lvl.skill + p.variation.skill);
     p.passing = clamp(lvl.skill - p.variation.skill * 0.5);
     p.flair = clamp(0.3 + p.variation.skill * 3);
+    p.aggression = p.variation.aggression;
   }
 }
 

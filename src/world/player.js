@@ -46,6 +46,7 @@ export function stepPlayer(p, joy, world) {
   p.prev.x = p.x;
   p.prev.y = p.y;
   p.prev.z = p.z;
+  if (p.sentOff) return;
   for (const t of ['touchTimer', 'shotWindow', 'kickTimer', 'flickTimer']) {
     if (p[t] > 0) p[t] -= DT;
   }
@@ -54,6 +55,8 @@ export function stepPlayer(p, joy, world) {
   if (p.state === 'trap') stepTrap(p, joy, dir, world);
   else if (p.state === 'jump') stepJump(p, world);
   else if (p.state === 'down') stepDown(p);
+  else if (p.state === 'slide') stepSlide(p, world);
+  else if (p.state === 'fallen') stepFallen(p);
   else stepRun(p, joy, dir, world);
 
   applyAftertouch(p, dir, world.ball);
@@ -100,6 +103,12 @@ function stepRun(p, joy, dir, world) {
       p.stateTimer = k.jumpTime;
       p.jumpDir = dir || { x: p.fx, y: p.fy };
       p.headed = false;
+      return;
+    }
+    // Fire while an opponent has the ball at his feet: sliding tackle.
+    // (With a loose ball, fire keeps its meaning "trap at the next touch".)
+    if (opponentHasBall(p, ball)) {
+      startSlide(p, dir, world);
       return;
     }
   }
@@ -157,6 +166,17 @@ function trap(p, ball, world) {
 // player's speed.
 function push(p, ball, world) {
   const cfg = tuning.player;
+  // Taking the ball off an opponent from behind, with body contact, is a foul (if the
+  // referee sees it). A poke at the ball from a distance is fine.
+  const q = ball.lastTouch;
+  if (q && q.team !== p.team && q.role !== 'keeper' && q.state === 'run' &&
+      Math.hypot(q.x - ball.x, q.y - ball.y) < 1.0 && Math.hypot(q.x - p.x, q.y - p.y) < 0.8 &&
+      playerSpeed(p) > 3 && fromBehind(p, q)) {
+    q.state = 'fallen';
+    q.stateTimer = cfg.fallTime * 0.7;
+    q.vx = q.vy = 0;
+    world.events.push({ type: 'foul', by: p, victim: q, x: q.x, y: q.y, fromBehind: true, kind: 'block' });
+  }
   const speed = Math.max(playerSpeed(p) * cfg.dribbleFactor, cfg.minPush);
   ball.vx = p.fx * speed;
   ball.vy = p.fy * speed;
@@ -363,7 +383,101 @@ function stepDown(p) {
   if (p.stateTimer <= 0) {
     p.state = 'run';
     p.z = 0;
+    p.gettingUp = false;
   }
+}
+
+// --- Sliding tackle ---------------------------------------------------------------------------
+
+// An opponent has the ball close at his feet (not a pass travelling on its own).
+function opponentHasBall(p, ball) {
+  const q = ball.lastTouch;
+  return !!q && q.team !== p.team && !ball.heldBy && ball.z < 1 && Math.hypot(q.x - ball.x, q.y - ball.y) < 2.5;
+}
+
+// Is p coming at q from behind: both facing about the same way, and p within a 45° cone
+// behind q? (Side by side, shoulder to shoulder, is not "from behind".)
+export function fromBehind(p, q) {
+  const sameWay = p.fx * q.fx + p.fy * q.fy > 0.7;
+  const dx = q.x - p.x, dy = q.y - p.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const behind = (dx * q.fx + dy * q.fy) / d > 0.7;
+  return sameWay && behind;
+}
+
+function startSlide(p, dir, world) {
+  const cfg = tuning.player;
+  const d = dir || { x: p.fx, y: p.fy };
+  p.fx = d.x;
+  p.fy = d.y;
+  const speed = Math.max(playerSpeed(p), cfg.slideSpeed);
+  p.vx = d.x * speed;
+  p.vy = d.y * speed;
+  p.state = 'slide';
+  p.stateTimer = cfg.slideTime;
+  p.slideTouched = false;
+  p.slideFouled = false;
+  world.events.push({ type: 'slide' });
+}
+
+// Sliding: the feet go first. Ball first = clean tackle; a player first, or from behind = foul.
+function stepSlide(p, world) {
+  const { ball, events } = world;
+  const cfg = tuning.player;
+  p.stateTimer -= DT;
+  const speed = playerSpeed(p);
+  if (speed > 0) {
+    const ns = Math.max(0, speed - cfg.slideFriction * DT);
+    p.vx *= ns / speed;
+    p.vy *= ns / speed;
+  }
+  p.x += p.vx * DT;
+  p.y += p.vy * DT;
+  const lx = p.x + p.fx * 0.6, ly = p.y + p.fy * 0.6; // leading foot
+
+  if (!p.slideTouched && canTouch(p, ball, world) && ball.z < 0.6 && Math.hypot(ball.x - lx, ball.y - ly) < 0.7) {
+    const out = Math.max(8, playerSpeed(p) * 1.3);
+    const a = world.rng.range(-0.25, 0.25);
+    ball.vx = (p.fx * Math.cos(a) - p.fy * Math.sin(a)) * out;
+    ball.vy = (p.fx * Math.sin(a) + p.fy * Math.cos(a)) * out;
+    ball.vz = world.rng.range(0, 2);
+    ball.spin = 0;
+    touched(p, ball, world);
+    p.slideTouched = true;
+    events.push({ type: 'tackle', speed: out });
+  }
+
+  if (!p.slideFouled && world.players) {
+    for (const q of world.players) {
+      if (q.team === p.team || q.sentOff || q.role === 'keeper' || q.state === 'fallen') continue;
+      if (Math.hypot(q.x - lx, q.y - ly) > 0.75) continue;
+      const behind = fromBehind(p, q);
+      if (p.slideTouched && !behind) continue; // clean: the ball was played first
+      q.state = 'fallen';
+      q.stateTimer = cfg.fallTime;
+      q.vx = q.vy = 0;
+      p.slideFouled = true;
+      events.push({ type: 'foul', by: p, victim: q, x: q.x, y: q.y, fromBehind: behind, kind: 'slide' });
+      break;
+    }
+  }
+
+  if (p.stateTimer <= 0) {
+    p.state = 'down';
+    p.stateTimer = cfg.slideRecover;
+    p.vx = p.vy = 0;
+    p.gettingUp = true; // still lying after the slide (drawn lying)
+  }
+}
+
+// A fouled player lies on the ground for a moment.
+function stepFallen(p) {
+  p.stateTimer -= DT;
+  p.vx *= 0.8;
+  p.vy *= 0.8;
+  p.x += p.vx * DT;
+  p.y += p.vy * DT;
+  if (p.stateTimer <= 0) p.state = 'run';
 }
 
 // Kick the ball in direction `d` (unit vector). Skill (0..1) sets the random direction error.

@@ -20,6 +20,7 @@ export function drawHud(ctx, W, H, info) {
 
   drawScore(ctx, W, info.teams, info.score);
   drawClock(ctx, W, info.clock, info.half);
+  if (info.shootout) drawShootout(ctx, W, info.teams, info.shootout);
   if (info.prompt) drawPrompt(ctx, W, H, info.prompt);
 
   const { hud } = info;
@@ -44,7 +45,7 @@ export function drawHud(ctx, W, H, info) {
     ctx.lineWidth = 8;
     ctx.strokeStyle = 'rgba(0,0,0,0.35)';
     ctx.strokeText(hud.banner, 0, 0);
-    ctx.fillStyle = '#ffe14d';
+    ctx.fillStyle = hud.bannerColor || '#ffe14d';
     ctx.fillText(hud.banner, 0, 0);
     ctx.restore();
   }
@@ -94,12 +95,44 @@ function drawPrompt(ctx, W, H, prompt) {
       ctx.fillRect(x + 14 + tw + 16 + i * 14, y + 9, 10, 14);
     }
   }
+  if (prompt.pointer !== undefined) {
+    // The goal seen from the penalty spot, with the direction pointer.
+    const bw = Math.min(260, w - 28), bx = (W - bw) / 2, by = y - 26;
+    ctx.fillStyle = 'rgba(10,20,15,0.55)';
+    ctx.fillRect(bx - 6, by - 4, bw + 12, 20);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(bx, by + 14);
+    ctx.lineTo(bx, by);
+    ctx.lineTo(bx + bw, by);
+    ctx.lineTo(bx + bw, by + 14);
+    ctx.stroke();
+    const px = bx + ((prompt.pointer + 1) / 2) * bw;
+    ctx.fillStyle = '#ffe14d';
+    ctx.beginPath();
+    ctx.moveTo(px, by + 2);
+    ctx.lineTo(px - 7, by + 15);
+    ctx.lineTo(px + 7, by + 15);
+    ctx.closePath();
+    ctx.fill();
+  }
   if (prompt.meter !== undefined) {
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
     ctx.fillRect(x + 14, y + 36, w - 28, 5);
     ctx.fillStyle = '#ffe14d';
     ctx.fillRect(x + 14, y + 36, (w - 28) * Math.min(1, prompt.meter), 5);
   }
+}
+
+function drawShootout(ctx, W, teams, so) {
+  const text = `Penalties   ${teams[0].name} ${so.goals[0]} : ${so.goals[1]} ${teams[1].name}`;
+  ctx.font = `700 14px ${FONT}`;
+  const w = ctx.measureText(text).width + 24;
+  pill(ctx, (W - w) / 2, 104, w, 24);
+  ctx.fillStyle = '#ffe14d';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, W / 2, 109);
 }
 
 // "RED 1 : 0 BLUE" with kit colour swatches.

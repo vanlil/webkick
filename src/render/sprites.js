@@ -8,6 +8,10 @@ const OUTLINE = 'rgba(0,0,0,0.35)';
 const SUN = { x: 0.35, y: 0.2 }; // shadow offset per metre of height
 
 export function drawPlayer(ctx, view, p, x, y, { active = false } = {}) {
+  if (p.state === 'slide' || p.state === 'fallen' || (p.state === 'down' && p.gettingUp)) {
+    drawLying(ctx, view, p, x, y, active);
+    return;
+  }
   const s = view.scale * tuning.render.playerScale;
   const zs = tuning.render.zScale;
   const gx = view.sx(x);
@@ -128,6 +132,71 @@ export function drawPlayer(ctx, view, p, x, y, { active = false } = {}) {
   ctx.arc(hX, hY, r, 0, Math.PI * 2);
   ctx.stroke();
   if (tilted) ctx.restore();
+}
+
+// A player on the ground: sliding (feet first, in the facing direction) or fallen (face down,
+// head in the facing direction).
+function drawLying(ctx, view, p, x, y, active) {
+  const s = view.scale * tuning.render.playerScale;
+  const zs = tuning.render.zScale;
+  const gx = view.sx(x), gy = view.sy(y);
+  const P = (ox, oy, hz) => [gx + ox * s, gy + oy * s - hz * zs * s];
+  const feetFirst = p.state !== 'fallen';
+  let dx = feetFirst ? p.fx : -p.fx, dy = feetFirst ? p.fy : -p.fy; // hips → feet
+  // Lying straight up or down the screen would look like standing in the 3/4 view:
+  // turn the body a little, so it clearly lies on the ground.
+  if (Math.abs(dx) < 0.4) {
+    const a = (p.index % 2 ? 1 : -1) * 0.45;
+    [dx, dy] = [dx * Math.cos(a) - dy * Math.sin(a), dx * Math.sin(a) + dy * Math.cos(a)];
+  }
+  const qx = -dy, qy = dx;
+  const kit = p.kit;
+
+  // Shadow along the body.
+  ctx.fillStyle = SHADOW;
+  ctx.beginPath();
+  ctx.ellipse(gx - dx * 0.1 * s + 0.15 * s, gy - dy * 0.1 * s + 0.1 * s, 1.0 * s, 0.38 * s, Math.atan2(dy, dx), 0, Math.PI * 2);
+  ctx.fill();
+  if (active) {
+    ctx.strokeStyle = '#ffe14d';
+    ctx.lineWidth = Math.max(1.5, 0.08 * s);
+    ctx.beginPath();
+    ctx.ellipse(gx, gy, 0.9 * s, 0.5 * s, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.lineCap = 'round';
+  const legW = Math.max(2, 0.13 * s);
+  for (const side of [1, -1]) {
+    const hip = P(qx * 0.1 * side, qy * 0.1 * side, 0.15);
+    const knee = P(dx * 0.45 + qx * 0.12 * side, dy * 0.45 + qy * 0.12 * side, 0.18);
+    const foot = P(dx * 0.9 + qx * 0.14 * side, dy * 0.9 + qy * 0.14 * side, 0.12);
+    line(ctx, hip, knee, kit.skin, legW);
+    line(ctx, knee, foot, kit.socks, legW);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath();
+    ctx.arc(foot[0], foot[1], legW * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Arms out to the sides.
+  const shoulder = P(-dx * 0.5, -dy * 0.5, 0.2);
+  for (const side of [1, -1]) {
+    line(ctx, shoulder, P(-dx * 0.35 + qx * 0.45 * side, -dy * 0.35 + qy * 0.45 * side, 0.15), kit.skin, Math.max(1.5, 0.1 * s));
+  }
+  // Shorts, shirt, head.
+  const hip = P(0, 0, 0.18);
+  ctx.fillStyle = kit.shorts;
+  ctx.beginPath();
+  ctx.arc(hip[0], hip[1], 0.17 * s, 0, Math.PI * 2);
+  ctx.fill();
+  line(ctx, P(-dx * 0.1, -dy * 0.1, 0.2), shoulder, kit.shirt, 0.36 * s);
+  const head = P(-dx * 0.78, -dy * 0.78, 0.2);
+  ctx.fillStyle = kit.hair;
+  ctx.beginPath();
+  ctx.arc(head[0], head[1], 0.15 * s, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
 export function drawBall(ctx, view, ball, x, y, z) {
