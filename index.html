@@ -4,10 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>webkick</title>
+  <meta name="theme-color" content="#2f7a3c">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <canvas id="game"></canvas>
+  <div id="title" role="dialog" aria-label="webkick title screen">
+    <p id="title-prompt">Loading…</p>
+    <p id="title-help">Arrows: run · Space: fire · G: tuning panel</p>
+  </div>
   <noscript>webkick needs JavaScript.</noscript>
   <script type="module" src="src/main.js"></script>
 </body>

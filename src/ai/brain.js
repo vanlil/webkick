@@ -18,7 +18,9 @@ export function teamJoysticks(team, world, skip, out) {
 
   let chaser = null;
   let presser = null;
-  if (!team.human) {
+  const m = world.match;
+  const open = !m || m.phase === 'play' || (m.phase === 'start' && m.startTeam === team.id);
+  if (!team.human && open) {
     chaser = pickChaser(team, outfield, ball);
     if (lvl.chasers > 1 && !attacking) {
       let best = Infinity;
@@ -34,7 +36,7 @@ export function teamJoysticks(team, world, skip, out) {
     let joy;
     if (p === chaser) joy = chase(p, team, world, ball);
     else if (p === presser) joy = press(p, team, ball);
-    else joy = position(p, team, ball, attacking);
+    else joy = position(p, team, ball, attacking, world);
     out.set(p, finishJoy(p, joy));
   }
 }
@@ -96,11 +98,49 @@ function pickChaser(team, outfield, ball) {
 
 // --- Behaviours -----------------------------------------------------------------------------
 
-function position(p, team, ball, attacking) {
+// Corner positions (x offset from the goal centre towards the near post, distance from the
+// goal line), in order of priority. Attackers crowd the box, defenders cover posts and zones.
+const CORNER_ATTACK = [[3, 5], [-3, 6], [0, 11], [8, 12], [-8, 13], [0, 18]];
+const CORNER_DEFEND = [[3.5, 1.5], [-3.5, 1.5], [0, 5], [6, 8], [-6, 8], [0, 12], [10, 14], [-10, 14]];
+
+function cornerSpot(p, team, sp) {
+  const attacking = sp.team === team.id;
+  const spots = attacking ? CORNER_ATTACK : CORNER_DEFEND;
+  // Who goes: attackers = forwards then midfielders; defenders = defenders then midfielders.
+  const order = attacking ? ['fwd', 'mid'] : ['def', 'mid'];
+  const takers = team.players
+    .filter((q) => q.role !== 'keeper' && q !== sp.taker && order.includes(q.role))
+    .sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role) || a.index - b.index);
+  const i = takers.indexOf(p);
+  if (i < 0 || i >= spots.length) return null;
+  const goalY = sp.y < PITCH.length / 2 ? 0 : PITCH.length;
+  const into = goalY === 0 ? 1 : -1;
+  const near = Math.sign(sp.x - PITCH.width / 2) || 1;
+  const [dx, dist] = spots[i];
+  return { x: PITCH.width / 2 + dx * near, y: goalY + into * dist };
+}
+
+function position(p, team, ball, attacking, world) {
+  const sp = world.match && world.match.setPiece;
+  if (sp && sp.type === 'corner' && sp.stage !== 'dead') {
+    const spot = cornerSpot(p, team, sp);
+    if (spot) return steer(p, spot.x, spot.y, 0.6);
+  }
   const slot = p.index - 1;
   const n = toNorm(team.attackDir, ball.x, ball.y);
   const [tx, ty] = tacticTarget(team.tactic, slot, n.x, n.y, attacking);
   const w = toWorld(team.attackDir, tx, ty);
+  // Opponent's set piece: keep the distance from the ball.
+  if (sp && sp.team !== team.id && sp.stage !== 'dead') {
+    const R = sp.type === 'throwin' ? 3 : PITCH.circleRadius;
+    const bx = world.ball.x, by = world.ball.y;
+    const dx = w.x - bx, dy = w.y - by;
+    const d = Math.hypot(dx, dy);
+    if (d < R) {
+      w.x = bx + (dx / (d || 1)) * R;
+      w.y = by + (dy / (d || 1)) * R;
+    }
+  }
   return steer(p, w.x, w.y, 1.0);
 }
 

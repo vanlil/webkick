@@ -154,7 +154,7 @@ function tryCatch(k, team, world, goal) {
   ball.touchStep = world.step;
   if (rng.next() < pCatch) {
     k.state = 'hold';
-    k.stateTimer = kp.holdTime;
+    k.stateTimer = team.human ? tuning.setpiece.humanAuto : kp.holdTime;
     k.diveAngle = 0;
     k.z = 0;
     k.vx = k.vy = 0;
@@ -173,10 +173,10 @@ function tryCatch(k, team, world, goal) {
   }
 }
 
-// Holding the ball: wait, then throw or kick it to a team-mate.
+// Holding the ball: wait, then throw or kick it to a team-mate. The human's keeper can clear
+// it earlier with a stick direction + fire (9 kick types).
 function stepHold(k, team, world, goal) {
-  const { ball, rng, events } = world;
-  const kp = tuning.keeper;
+  const { ball } = world;
   k.vx = k.vy = 0;
   ball.x = k.x + goal.into * 0.1;
   ball.y = k.y + goal.into * 0.35;
@@ -184,15 +184,29 @@ function stepHold(k, team, world, goal) {
   ball.vx = ball.vy = ball.vz = 0;
   k.fx = 0;
   k.fy = goal.into;
+  // During a set piece (goal kick) the set piece code decides when he kicks.
+  if (world.match && world.match.phase !== 'play') return;
+  if (team.human && world.humanJoy) {
+    if (world.humanJoy.firePressed) {
+      clearance(k, team, world, world.humanJoy);
+      return;
+    }
+  }
   k.stateTimer -= DT;
   if (k.stateTimer > 0) return;
+  distribute(k, team, world, false);
+}
 
+// CPU: throw to a free team-mate nearby, or kick long. `forceKick` for goal kicks.
+export function distribute(k, team, world, forceKick) {
+  const { ball, rng, events } = world;
+  const kp = tuning.keeper;
   const target = pickTarget(k, team, world);
   const dx = target.x - ball.x;
   const dy = target.y - ball.y;
   const d = Math.hypot(dx, dy) || 1;
   let vh, vz;
-  if (d < 28) {
+  if (d < 28 && !forceKick) {
     // Throw: flat arc that lands at the team-mate.
     vh = Math.min(18, Math.max(10, d * 0.9));
     const T = d / vh;
@@ -204,8 +218,29 @@ function stepHold(k, team, world, goal) {
     events.push({ type: 'clearance' });
   }
   const err = rng.range(-0.05, 0.05);
-  ball.vx = (dx / d) * vh + err * vh;
-  ball.vy = (dy / d) * vh;
+  release(k, world, (dx / d) * vh + err * vh, (dy / d) * vh, vz);
+}
+
+// Human clearance: forward/back on the stick = strong/weak (centre = medium), sideways = angle.
+// "Forward" means towards the opponent's goal.
+export function clearance(k, team, world, joy) {
+  const f = joy.dy * team.attackDir; // +1 forward, 0 centre, -1 back
+  const side = joy.dx;
+  const [angle, vh, vz] =
+    f > 0 ? [side ? 0.52 : 0, 25, 12] :
+    f < 0 ? [side ? 0.7 : 0, 12, 5] :
+    [side ? 0.96 : 0, 19, 9];
+  const power = 0.85 + 0.15 * team.level.keeperSkill;
+  const vx = Math.sin(angle) * side * vh * power;
+  const vy = Math.cos(angle) * team.attackDir * vh * power;
+  world.events.push({ type: 'clearance' });
+  release(k, world, vx, vy, vz * power);
+}
+
+function release(k, world, vx, vy, vz) {
+  const { ball } = world;
+  ball.vx = vx;
+  ball.vy = vy;
   ball.vz = vz;
   ball.heldBy = null;
   ball.touchSeq++;

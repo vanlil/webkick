@@ -1,6 +1,9 @@
 import { DT, PITCH, TACTIC_NAMES, tuning, loadTuning, saveTuning } from './config.js';
 import { createInput } from './input.js';
-import { createWorld, stepWorld, applyOptions, startFromCentre, playerSpeed } from './world/world.js';
+import { createWorld, stepWorld, applyOptions, playerSpeed } from './world/world.js';
+import { createMatch, gameTime } from './rules/match.js';
+import { setPiecePrompt } from './rules/setpieces.js';
+import { drawScanner } from './render/scanner.js';
 import { createCamera, updateCamera, snapCamera } from './render/camera.js';
 import { drawPitch, drawGoal } from './render/pitch.js';
 import { drawPlayer, drawBall } from './render/sprites.js';
@@ -16,10 +19,29 @@ const world = createWorld();
 const panel = createDevPanel(() => applyOptions(world));
 const camera = createCamera(world.ball.x, world.ball.y);
 
+// ?debug in the URL exposes the simulation in the browser console as window.webkick.
+if (new URLSearchParams(location.search).has('debug')) window.webkick = { world, tuning };
+
+// Title screen: the match starts with the first key press, click or tap (browsers also need
+// this user action before they allow sound, from M5 on).
+const titleEl = document.getElementById('title');
+let started = false;
+titleEl.querySelector('#title-prompt').textContent = 'Press Space to start';
+titleEl.classList.add('ready');
+function start() {
+  if (started) return;
+  started = true;
+  titleEl.classList.add('hidden');
+  createMatch(world);
+}
+window.addEventListener('keydown', (e) => { if (!e.metaKey && !e.ctrlKey && !e.altKey) start(); });
+titleEl.addEventListener('pointerdown', start);
+
 // Dev commands are queued and applied at the start of the next simulation step.
 const commands = [];
 let paused = false;
-let showDebug = true;
+let showDebug = false;
+let scannerSize = 1;
 
 // Messages for the HUD: a big banner (GOAL) and a small line for the last action.
 const hud = { banner: '', bannerTime: 0, action: '', actionTime: 0 };
@@ -27,13 +49,14 @@ const hud = { banner: '', bannerTime: 0, action: '', actionTime: 0 };
 const ACTION_LABELS = {
   shot: 'Shot', pass: 'Pass', lob: 'Lob', header: 'Header', overhead: 'Overhead kick',
   flick: 'Flick', post: 'Post!', bar: 'Crossbar!', save: 'Save!', catch: 'Caught',
-  throwin: 'Throw-in', corner: 'Corner', goalkick: 'Goal kick',
+  throwin: 'Throw-in', corner: 'Corner', goalkick: 'Goal kick', cross: 'Cross', clearance: 'Clearance',
 };
 
 input.onKey('KeyP', () => { paused = !paused; });
 input.onKey('KeyG', () => panel.toggle());
 input.onKey('KeyI', () => { showDebug = !showDebug; });
 input.onKey('KeyR', () => commands.push('restart'));
+input.onKey('KeyX', () => { scannerSize = (scannerSize + 1) % 3; });
 input.onKey('KeyL', () => commands.push('highball'));
 // Tactics of the human team (keys 1–4).
 TACTIC_NAMES.forEach((name, i) => input.onKey(`Digit${i + 1}`, () => {
@@ -48,14 +71,14 @@ function applyCommand(cmd) {
   const { ball } = world;
   const p = world.human.player;
   if (cmd === 'restart') {
-    startFromCentre(world, 0);
-  } else if (cmd === 'highball') {
+    createMatch(world);
+    hud.bannerTime = 0;
+  } else if (cmd === 'highball' && world.match.phase === 'play') {
     // A high ball dropping in front of the controlled player, to practise headers.
     Object.assign(ball, {
       x: p.x + p.fx * 16, y: p.y + p.fy * 16, z: 1, vx: -p.fx * 5, vy: -p.fy * 5, vz: 13,
       spin: 0, inGoal: -1, heldBy: null,
     });
-    world.restart = null;
     ball.prev.x = ball.x;
     ball.prev.y = ball.y;
     ball.prev.z = ball.z;
@@ -74,11 +97,21 @@ function step() {
     if (e.type === 'goal' && e.team !== undefined) {
       hud.banner = 'GOAL!';
       hud.bannerTime = tuning.goal.resetDelay;
+      hud.bannerAge = 0;
+    } else if (e.type === 'halftime') {
+      hud.banner = 'HALF TIME';
+      hud.bannerTime = tuning.setpiece.halfTimePause;
+      hud.bannerAge = 0;
+    } else if (e.type === 'fulltime') {
+      hud.banner = 'FULL TIME';
+      hud.bannerTime = Infinity;
+      hud.bannerAge = 0;
     } else if (ACTION_LABELS[e.type]) {
       showAction(ACTION_LABELS[e.type] + (e.speed ? `  ${Math.round(e.speed * 3.6)} km/h` : ''));
     }
   }
   if (hud.bannerTime > 0) hud.bannerTime -= DT;
+  hud.bannerAge = (hud.bannerAge || 0) + DT;
   if (hud.actionTime > 0) hud.actionTime -= DT;
 }
 
@@ -106,7 +139,7 @@ function frame(now) {
   last = now;
   fps += (1 / Math.max(realDt, 1e-3) - fps) * 0.05;
 
-  if (!paused) {
+  if (!paused && started) {
     acc += realDt * tuning.game.speed;
     while (acc >= DT) {
       step();
@@ -161,8 +194,12 @@ function render(alpha, realDt) {
     playerState: active ? active.state : '-',
     teams: world.teams,
     score: world.score,
+    clock: gameTime(world.match),
+    half: world.match.half,
+    prompt: world.match.phase === 'fulltime' ? { text: 'Press R for a new match' } : setPiecePrompt(world),
     hud,
   });
+  drawScanner(ctx, W, H, world, camera, scannerSize);
 }
 
 snapCamera(camera, PITCH.width / 2, PITCH.length / 2);

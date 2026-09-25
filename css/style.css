@@ -9,6 +9,67 @@ html, body {
   display: block;
 }
 
+/* Title screen: shown while loading, then until the player starts. */
+#title {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 6vh;
+  /* Crop mostly at the bottom (grass), so the logo at the top stays visible. */
+  background: #101a14 url(../assets/title.webp) center 12% / cover no-repeat;
+  color: #fff;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-align: center;
+  cursor: pointer;
+  transition: opacity 0.6s ease;
+}
+
+#title.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#title p {
+  margin: 0.3em 16px;
+  text-shadow: 0 2px 0 #000, 0 0 12px rgba(0, 0, 0, 0.8);
+}
+
+#title-prompt {
+  font-size: clamp(22px, 3.2vw, 40px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #ffe14d;
+}
+
+#title.ready #title-prompt {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+#title-help {
+  font-size: clamp(13px, 1.3vw, 16px);
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+/* Narrower screens crop the sides: crop a bit more on the right, so the logo stays complete. */
+@media (max-aspect-ratio: 16/9) {
+  #title { background-position: 35% center; }
+}
+
+@keyframes pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #title.ready #title-prompt { animation: none; }
+  #title { transition: none; }
+}
+
 /* Keep the tuning panel compact and readable over the pitch. */
 .lil-gui.root {
   --width: 280px;

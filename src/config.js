@@ -55,6 +55,9 @@ export const HUMAN_TEAM = { reaction: 0.2, skill: 0.85, pace: 1.0, keeperReactio
 
 export const TACTIC_NAMES = ['4-4-2', '4-3-3', '4-2-4', '5-3-2'];
 
+// Real minutes per half. The clock always shows 2 × 45 minutes of game time.
+export const HALF_MINUTES = [3, 5, 10, 20];
+
 // Wind presets (m/s), airborne ball only.
 export const WIND_LEVELS = { none: 0, light: 2, medium: 4, strong: 6 };
 
@@ -68,6 +71,7 @@ export const DEFAULTS = {
     difficulty: 'medium', // CPU opponent: easy / medium / hard
     humanTactic: '4-4-2',
     cpuTactic: '4-4-2',
+    halfMinutes: 5,
   },
   ball: {
     gravity: 9.81,
@@ -129,6 +133,18 @@ export const DEFAULTS = {
     holdTime: 1.4,        // seconds before the keeper throws or kicks the ball out
     kickSpeed: 23,
     kickLift: 11,
+  },
+  setpiece: {
+    deadTime: 0.7,        // ball out: seconds before it is placed for the restart
+    walkTimeout: 4,       // the taker walks to the ball; after this he is placed there
+    humanAuto: 3,         // human throw-in / goal kick is taken automatically after this
+    cpuDelay: 1.2,        // the CPU takes its set pieces after this
+    throwMin: 5,          // throw-in speed without / with a full charge
+    throwMax: 17,
+    cornerMin: 6,         // corner distance at power 1 and 9 (m)
+    cornerMax: 50,
+    runupTime: 0.6,
+    halfTimePause: 3,
   },
   ai: {
     passMinDist: 7,

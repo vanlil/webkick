@@ -1,7 +1,7 @@
 import { tuning } from '../config.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-const HELP = 'Arrows: run   Space: fire (shoot / hold to trap and pass)   1–4: tactic   L: high ball   R: kick-off   P: pause   G: tuning   I: info';
+const HELP = 'Arrows: run   Space: fire (shoot / hold to trap and pass)   1–4: tactic   X: radar   R: new match   P: pause   G: tuning   I: info';
 
 export function drawHud(ctx, W, H, info) {
   ctx.save();
@@ -19,19 +19,21 @@ export function drawHud(ctx, W, H, info) {
   }
 
   drawScore(ctx, W, info.teams, info.score);
+  drawClock(ctx, W, info.clock, info.half);
+  if (info.prompt) drawPrompt(ctx, W, H, info.prompt);
 
   const { hud } = info;
   if (hud.actionTime > 0) {
     ctx.globalAlpha = Math.min(1, hud.actionTime * 2);
     ctx.font = `600 16px ${FONT}`;
     ctx.fillStyle = '#fff';
-    ctx.fillText(hud.action, W / 2, 54);
+    ctx.fillText(hud.action, W / 2, 80);
     ctx.globalAlpha = 1;
   }
 
   if (hud.bannerTime > 0) {
     const t = hud.bannerTime;
-    const scale = 1 + Math.max(0, t - (tuning.goal.resetDelay - 0.25)) * 2;
+    const scale = 1 + Math.max(0, 0.25 - (hud.bannerAge || 0)) * 2; // short zoom-in
     ctx.save();
     ctx.translate(W / 2, H * 0.4);
     ctx.scale(scale, scale);
@@ -61,6 +63,43 @@ export function drawHud(ctx, W, H, info) {
     ctx.fillText('PAUSED', W / 2, H / 2);
   }
   ctx.restore();
+}
+
+function drawClock(ctx, W, seconds, half) {
+  const mm = Math.floor(seconds / 60);
+  const ss = Math.floor(seconds % 60);
+  const text = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}   ${half === 1 ? '1st' : '2nd'} half`;
+  ctx.font = `600 13px ${FONT}`;
+  const w = ctx.measureText(text).width + 22;
+  pill(ctx, (W - w) / 2, 48, w, 22);
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, W / 2, 52);
+}
+
+// Set piece instructions, with the corner power bar (9 steps) and a hold meter.
+function drawPrompt(ctx, W, H, prompt) {
+  ctx.font = `600 14px ${FONT}`;
+  const tw = ctx.measureText(prompt.text).width;
+  const extra = prompt.power ? 9 * 14 + 16 : 0;
+  const w = tw + extra + 28;
+  const x = (W - w) / 2, y = H - 78;
+  pill(ctx, x, y, w, 32);
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'left';
+  ctx.fillText(prompt.text, x + 14, y + 8);
+  if (prompt.power) {
+    for (let i = 0; i < 9; i++) {
+      ctx.fillStyle = i < prompt.power ? '#ffe14d' : 'rgba(255,255,255,0.25)';
+      ctx.fillRect(x + 14 + tw + 16 + i * 14, y + 9, 10, 14);
+    }
+  }
+  if (prompt.meter !== undefined) {
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(x + 14, y + 36, w - 28, 5);
+    ctx.fillStyle = '#ffe14d';
+    ctx.fillRect(x + 14, y + 36, (w - 28) * Math.min(1, prompt.meter), 5);
+  }
 }
 
 // "RED 1 : 0 BLUE" with kit colour swatches.

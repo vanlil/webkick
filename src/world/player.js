@@ -164,7 +164,7 @@ export function bodyBlock(p, ball, world) {
     ball.vz *= 0.3;
     ball.spin = 0;
     touched(p, ball, world);
-    events.push({ type: 'block' });
+    if (-vn > 1.5) events.push({ type: 'block', strength: -vn }); // not for a ball just pinched
   }
   ball.x = p.x + nx * minD;
   ball.y = p.y + ny * minD;
@@ -278,16 +278,25 @@ function stepDown(p) {
 
 // Kick the ball in direction `d` (unit vector). Skill (0..1) sets the random direction error.
 function kick(p, ball, d, speed, lift, skill, world, kind) {
-  const k = tuning.kick;
-  const a = world.rng.range(-1, 1) * (1 - skill) * k.maxError;
+  const a = world.rng.range(-1, 1) * (1 - skill) * tuning.kick.maxError;
   const dx = d.x * Math.cos(a) - d.y * Math.sin(a);
   const dy = d.x * Math.sin(a) + d.y * Math.cos(a);
-  ball.vx = dx * speed;
-  ball.vy = dy * speed;
-  ball.vz = lift;
+  launchBall(p, ball, dx * speed, dy * speed, lift, world, kind, true);
+}
+
+// Give the ball a velocity as a touch of player p (kicks, throw-ins, corners).
+// With `withAftertouch` the player can bend it for a short time afterwards.
+export function launchBall(p, ball, vx, vy, vz, world, kind, withAftertouch) {
+  ball.vx = vx;
+  ball.vy = vy;
+  ball.vz = vz;
   ball.spin = 0;
+  ball.heldBy = null;
   touched(p, ball, world);
-  p.aftertouch = { time: k.aftertouchTime, dx, dy, seq: ball.touchSeq, kind };
+  const speed = Math.hypot(vx, vy) || 1;
+  p.aftertouch = withAftertouch
+    ? { time: tuning.kick.aftertouchTime, dx: vx / speed, dy: vy / speed, seq: ball.touchSeq, kind }
+    : null;
   p.kickTimer = 0.2;
   p.touchTimer = 0.3;
   p.shotWindow = 0;
@@ -368,7 +377,7 @@ function touched(p, ball, world) {
   ball.touchStep = world.step;
 }
 
-// The ball can be played unless a keeper holds it or another player touched it this step.
+// The ball can be played unless it is held, out of play (dead) or touched by another player this step.
 export function canTouch(p, ball, world) {
-  return !ball.heldBy && !(ball.touchStep === world.step && ball.lastTouch !== p);
+  return !ball.heldBy && !ball.dead && !(ball.touchStep === world.step && ball.lastTouch !== p);
 }
