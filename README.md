@@ -3,7 +3,8 @@
 A fast, skill-based, top-down football game for the browser. Plain HTML + JavaScript,
 no build step, no backend.
 
-**Play it here: https://vanlil.github.io/webkick/**
+> [!NOTE]
+> **Play it here: https://vanlil.github.io/webkick/**
 
 ![Title screen with the main menu](docs/screenshots/title-menu.jpg)
 
