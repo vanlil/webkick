@@ -1,0 +1,16 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #1d2a22;
+}
+
+#game {
+  display: block;
+}
+
+/* Keep the tuning panel compact and readable over the pitch. */
+.lil-gui.root {
+  --width: 280px;
+  opacity: 0.94;
+}
