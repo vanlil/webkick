@@ -40,20 +40,29 @@ const PITCH_TYPES = {
   bumpy:      { rollFriction: 1.8, rollDrag: 0.40, restitution: 0.55, bounceGrip: 0.85, airDragMul: 1.0, bumpiness: 0.45, staminaMul: 1.1 },
 };
 
-// CPU difficulty. slide: willingness to make sliding tackles; tackleSense: how well the AI
-// avoids tackles from behind (fouls).
-// reaction: how old the ball information is that the AI acts on (s);
-// decision: time between decisions when on the ball (s); aftertouch: chance to bend a shot;
-// chasers: players going for the ball (2 = one presses the ball carrier);
-// skill/pace: base attributes of the players; keeper*: goalkeeper reaction and skill.
+// CPU difficulty = how well the computer *plays* (its "brain"), independent of how good its
+// players are (TEAM_LEVELS). reaction: how old the ball information is that the AI acts on
+// (s); decision: time between decisions on the ball (s); aftertouch: chance to bend a shot;
+// chasers: players going for the ball (2 = one presses the carrier); slide: willingness to
+// make sliding tackles; tackleSense: how well it avoids tackles from behind (fouls).
 export const AI_LEVELS = {
-  easy:   { reaction: 0.40, decision: 0.45, shootRange: 17, aftertouch: 0.0, passAim: 0.25, chasers: 1, headers: false, skill: 0.60, pace: 0.92, keeperReaction: 0.32, keeperSkill: 0.55, slide: 0.4, tackleSense: 0.3 },
-  medium: { reaction: 0.22, decision: 0.28, shootRange: 22, aftertouch: 0.5, passAim: 0.15, chasers: 2, headers: true,  skill: 0.80, pace: 0.97, keeperReaction: 0.22, keeperSkill: 0.75, slide: 0.7, tackleSense: 0.6 },
-  hard:   { reaction: 0.10, decision: 0.15, shootRange: 27, aftertouch: 1.0, passAim: 0.08, chasers: 2, headers: true,  skill: 0.95, pace: 1.02, keeperReaction: 0.14, keeperSkill: 0.90, slide: 1.0, tackleSense: 0.85 },
+  easy:   { reaction: 0.40, decision: 0.45, shootRange: 17, aftertouch: 0.0, passAim: 0.25, chasers: 1, headers: false, keeperReaction: 0.32, slide: 0.4, tackleSense: 0.3, chip: 0.2 },
+  medium: { reaction: 0.22, decision: 0.28, shootRange: 22, aftertouch: 0.5, passAim: 0.15, chasers: 2, headers: true,  keeperReaction: 0.22, slide: 0.7, tackleSense: 0.6, chip: 0.5 },
+  hard:   { reaction: 0.10, decision: 0.15, shootRange: 27, aftertouch: 1.0, passAim: 0.08, chasers: 2, headers: true,  keeperReaction: 0.14, slide: 1.0, tackleSense: 0.85, chip: 0.9 },
 };
 
-// The human team: fixed attributes; its CPU-controlled keeper and team-mates use these.
-export const HUMAN_TEAM = { reaction: 0.2, skill: 0.85, pace: 1.0, keeperReaction: 0.22, keeperSkill: 0.75 };
+// Team strength (the players' attributes), per team, as in the classic's divisions.
+export const TEAM_LEVELS = {
+  international: { skill: 0.95, pace: 1.02, keeperSkill: 0.90 },
+  first:         { skill: 0.85, pace: 1.00, keeperSkill: 0.80 },
+  second:        { skill: 0.77, pace: 0.97, keeperSkill: 0.72 },
+  third:         { skill: 0.68, pace: 0.94, keeperSkill: 0.63 },
+  fourth:        { skill: 0.60, pace: 0.90, keeperSkill: 0.55 },
+};
+export const TEAM_LEVEL_NAMES = { international: 'International', first: '1st division', second: '2nd division', third: '3rd division', fourth: '4th division' };
+
+// The brain of the human's own CPU-controlled team-mates and keeper.
+export const HUMAN_TEAM = { reaction: 0.2, keeperReaction: 0.22 };
 
 export const TACTIC_NAMES = ['4-4-2', '4-3-3', '4-2-4', '5-3-2'];
 
@@ -70,7 +79,9 @@ export const DEFAULTS = {
     wind: 'none',
     windDirDeg: 90,       // direction the wind blows TO; 0 = up the screen, 90 = right
     aftertouch: true,
-    difficulty: 'medium', // CPU opponent: easy / medium / hard
+    difficulty: 'medium', // how well the CPU plays: easy / medium / hard
+    homeLevel: 'first',   // strength of your team (TEAM_LEVELS)
+    awayLevel: 'first',   // strength of the CPU team
     humanTactic: '4-4-2',
     cpuTactic: '4-4-2',
     halfMinutes: 5,

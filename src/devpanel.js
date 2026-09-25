@@ -1,5 +1,5 @@
 import GUI from '../vendor/lil-gui.esm.min.js';
-import { PITCH_TYPE_NAMES, WIND_LEVELS, AI_LEVELS, TACTIC_NAMES, HALF_MINUTES, tuning, saveTuning, resetTuning, currentSurface } from './config.js';
+import { PITCH_TYPE_NAMES, WIND_LEVELS, AI_LEVELS, TEAM_LEVELS, TACTIC_NAMES, HALF_MINUTES, tuning, saveTuning, resetTuning, currentSurface } from './config.js';
 
 // Live tuning panel. Every change is saved to localStorage. "Copy settings" puts the current
 // values on the clipboard as JSON, so good values can be moved into config.js.
@@ -12,7 +12,9 @@ export function createDevPanel(onChange = () => {}, { hidden = false } = {}) {
   });
 
   const match = gui.addFolder('Match');
-  match.add(tuning.game, 'difficulty', Object.keys(AI_LEVELS)).name('CPU difficulty');
+  match.add(tuning.game, 'difficulty', Object.keys(AI_LEVELS)).name('CPU skill (AI)');
+  match.add(tuning.game, 'homeLevel', Object.keys(TEAM_LEVELS)).name('your team level');
+  match.add(tuning.game, 'awayLevel', Object.keys(TEAM_LEVELS)).name('opponent level');
   match.add(tuning.game, 'humanTactic', TACTIC_NAMES).name('your tactic (1–4)');
   match.add(tuning.game, 'cpuTactic', TACTIC_NAMES).name('CPU tactic');
   match.add(tuning.game, 'halfMinutes', HALF_MINUTES).name('minutes per half');

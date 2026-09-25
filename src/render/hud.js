@@ -1,7 +1,7 @@
 import { tuning } from '../config.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-const HELP = 'Arrows: run   Space: fire (shoot, hold to trap and pass, slide)   1–4: tactic   X: radar   M: sound   P: pause   Esc: menu';
+const HELP = 'Arrows: run   Space: fire (shoot, hold to trap and pass, slide)   1–4: tactic   X: radar   R/S: replay   M: sound   P: pause   Esc: menu';
 
 export function drawHud(ctx, W, H, info) {
   ctx.save();
@@ -18,8 +18,18 @@ export function drawHud(ctx, W, H, info) {
     panel(ctx, 12, 12, lines, 13);
   }
 
-  drawScore(ctx, W, info.teams, info.score);
-  drawClock(ctx, W, info.clock, info.half);
+  if (info.practice && info.practice.mode === 'skill') {
+    const text = `PRACTICE     goals ${info.practice.goals}   shots ${info.practice.shots}`;
+    ctx.font = `700 15px ${FONT}`;
+    const w = ctx.measureText(text).width + 28;
+    pill(ctx, (W - w) / 2, 12, w, 30);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, W / 2, 19);
+  } else {
+    drawScore(ctx, W, info.teams, info.score);
+    if (!info.practice) drawClock(ctx, W, info.clock, info.half);
+  }
   if (info.shootout) drawShootout(ctx, W, info.teams, info.shootout);
   if (info.prompt) drawPrompt(ctx, W, H, info.prompt);
 
@@ -57,6 +67,20 @@ export function drawHud(ctx, W, H, info) {
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.textAlign = 'center';
     ctx.fillText(HELP, W / 2, H - 28);
+  }
+
+  if (info.replay) {
+    const text = info.replay < 1 ? 'REPLAY  slow motion' : 'REPLAY';
+    ctx.font = `800 20px ${FONT}`;
+    const w = ctx.measureText(text).width + 40;
+    pill(ctx, 16, H - 56, w, 36);
+    ctx.fillStyle = '#ff4d4d';
+    ctx.beginPath();
+    ctx.arc(32, H - 38, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'left';
+    ctx.fillText(text, 46, H - 49);
   }
 
   if (info.paused) {

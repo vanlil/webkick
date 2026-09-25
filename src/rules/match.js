@@ -12,11 +12,15 @@ import { pickReferee, judgeFoul, inPenaltyArea } from './referee.js';
 //   'halftime' pause, then the teams change sides
 //   'shootout' penalty shoot-out after a draw (option); 'shootoutKick' while a kick is on
 //   'fulltime'
+//
+// Practice (world.match.practice): 'skill' = the opponent's keeper only, no clock, no fouls, the
+// ball comes back to the human after every goal, save or ball out of play; 'penalties' = a
+// penalty shoot-out against the CPU.
 
 const IDLE = { dx: 0, dy: 0, fire: false, firePressed: false, fireReleased: false };
 const HALF_GAME_SECONDS = 45 * 60;
 
-export function createMatch(world) {
+export function createMatch(world, practice = null) {
   const first = world.rng.next() < 0.5 ? 0 : 1; // coin toss
   world.score[0] = world.score[1] = 0;
   world.teams[0].attackDir = -1;
@@ -27,8 +31,80 @@ export function createMatch(world) {
     p.stamina = 1;
   }
   world.referee = pickReferee(world.rng);
-  world.match = { phase: 'start', half: 1, clock: 0, timer: 0, firstStart: first, startTeam: first, startSeq: 0, setPiece: null, shootout: null };
+  world.match = { phase: 'start', half: 1, clock: 0, timer: 0, firstStart: first, startTeam: first, startSeq: 0, setPiece: null, shootout: null, practice: null };
   setupCentreStart(world, first);
+  if (practice === 'skill') setupSkillPractice(world);
+  else if (practice === 'penalties') {
+    world.match.practice = { mode: 'penalties' };
+    startShootout(world, []);
+  }
+}
+
+// --- Practice -------------------------------------------------------------------------------
+
+const SHOT_EVENTS = new Set(['shot', 'lob', 'header', 'overhead']);
+
+function setupSkillPractice(world) {
+  const m = world.match;
+  const human = world.human.team;
+  m.practice = { mode: 'skill', goals: 0, shots: 0, reset: 0 };
+  // Only the keeper of the other team plays; the others wait outside the pitch.
+  for (const p of world.teams[1 - human].players) {
+    if (p.role === 'keeper') continue;
+    p.sentOff = true;
+    resetPlayer(p, -5, PITCH.length / 2, 1);
+    p.state = 'off';
+  }
+  setupCentreStart(world, human);
+  m.phase = 'play';
+  resetPracticeBall(world);
+}
+
+// The ball at the feet of the human's player; the other team's keeper back in his goal.
+function resetPracticeBall(world) {
+  const { ball } = world;
+  const human = world.human.team;
+  const p = world.human.player;
+  const x = Math.min(PITCH.width - 1, Math.max(1, p.x + p.fx * 0.9));
+  const y = Math.min(PITCH.length - 1, Math.max(1, p.y + p.fy * 0.9));
+  Object.assign(ball, { x, y, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, inGoal: -1, heldBy: null, lastTouch: null, dead: false });
+  ball.prev.x = x;
+  ball.prev.y = y;
+  ball.prev.z = 0;
+  world.possession = human;
+  world.history.length = 0;
+  const keepers = world.teams[1 - human];
+  const g = ownGoal(keepers);
+  resetPlayer(keepers.players[0], g.x, g.y + g.into, keepers.attackDir);
+}
+
+function stepSkillPractice(world, events) {
+  const pr = world.match.practice;
+  const { ball } = world;
+  const human = world.human.team;
+  for (const e of events) {
+    if (SHOT_EVENTS.has(e.type) && ball.lastTouch && ball.lastTouch.team === human) pr.shots++;
+  }
+  if (pr.reset > 0) {
+    pr.reset -= DT;
+    if (pr.reset <= 0) resetPracticeBall(world);
+    return;
+  }
+  const goal = events.find((e) => e.type === 'goal');
+  const r = tuning.ball.radius;
+  const out = ball.inGoal < 0 && !ball.heldBy &&
+    (ball.x < -r || ball.x > PITCH.width + r || ball.y < -r || ball.y > PITCH.length + r);
+  const saved = ball.heldBy && ball.heldBy.team !== human;
+  if (goal) {
+    const scorer = world.teams.find((t) => (t.attackDir < 0 ? 0 : 1) === goal.goal);
+    if (scorer.id === human) {
+      pr.goals++;
+      goal.team = human; // GOAL banner
+    }
+    pr.reset = 1.5;
+  } else if (out) pr.reset = 0.6;
+  else if (saved) pr.reset = 0.7;
+  if (pr.reset > 0 && !saved) ball.dead = true;
 }
 
 // Real seconds per half; the two halves of extra time are a third as long (at least 1 min).
@@ -71,6 +147,11 @@ export function matchPreStep(world, humanJoy, joys) {
 export function matchPostStep(world, events) {
   const m = world.match;
   const { ball } = world;
+
+  if (m.practice && m.practice.mode === 'skill') {
+    stepSkillPractice(world, events);
+    return;
+  }
 
   if (m.phase === 'play' || m.phase === 'setpiece') {
     m.clock += DT;

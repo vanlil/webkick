@@ -24,8 +24,13 @@ Use `-p <port>` for another port.
 
 ## Status
 
+Latest: practice mode (skill training against a keeper, penalty shoot-out), action replay
+(R / S), CPU chip passes and chip shots, and a direction arrow on your player. Team strength
+("Your team level", "Opponent level": international to 4th division) is now separate from
+"CPU skill" (how the computer plays: easy / medium / hard).
+
 Milestone 7 (menus and options): main menu, match setup (teams, kit colours and stripes,
-CPU difficulty, tactic, control mode "nearest to the ball" or "fixed player"), options (match
+CPU skill, team levels, tactic, control mode "nearest to the ball" or "fixed player"), options (match
 length, pitch, grass pattern, wind, speed, aftertouch, referee, extra time / penalties, sound, radar),
 remappable keys, pause menu, shadows for goals and corner flags. Earlier: sliding tackles,
 referee, cards, free kicks, penalties, sound, full matches with set pieces, 11 against 11 with
@@ -52,6 +57,7 @@ tactics, goalkeepers and a CPU opponent.
 | **Penalty** | A pointer sweeps across the goal: Space fixes the direction, hold for height (quick tap = low) |
 | **Penalty against you** | Arrow + Space: your keeper dives (sideways = that side, up = high, down = low); hold longer for a bigger dive |
 | **Goal kick / keeper has the ball** | Arrow chooses the kick (forward = strong, centre = medium, back = weak; sideways = angle), Space kicks |
+| R / S | Replay the last 8 seconds at normal speed / in slow motion (R, S, Esc or Space ends it) |
 | 1 – 4 | Tactic (takes effect at the next stoppage) |
 | X | Radar: small / large / off |
 | M | Sound: all / crowd only / off |
@@ -59,6 +65,10 @@ tactics, goalkeepers and a CPU opponent.
 | Esc | Menu (resume, restart, options, controls, quit) |
 | G | Tuning panel (for developers) |
 | I | Debug info |
+
+**Practice** (main menu): *Skill* — only the other keeper plays, no clock and no fouls; the
+ball comes back to you after every goal, save or ball out of play. *Penalties* — a shoot-out
+against the CPU (you shoot and you keep goal). The teams come from Match setup.
 
 Options, keys and tuning values are saved in the browser (`localStorage`). "Copy settings
 (JSON)" in the tuning panel copies them to the clipboard.

@@ -34,11 +34,25 @@ export function drawPlayer(ctx, view, p, x, y, { active = false } = {}) {
   const angle = Math.atan2(fy, fx);
 
   if (active) {
+    const R = (lying ? 1.2 : 0.55) * s;
+    const cx = view.sx(x), cy = view.sy(y);
     ctx.strokeStyle = '#ffe14d';
     ctx.lineWidth = Math.max(1.5, 0.07 * s);
     ctx.beginPath();
-    ctx.arc(view.sx(x), view.sy(y), (lying ? 1.2 : 0.55) * s, 0, Math.PI * 2);
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
     ctx.stroke();
+    // Direction cue: a small arrowhead on the ring where the player faces (where a shot goes).
+    if (!lying) {
+      const a = Math.atan2(p.fy, p.fx);
+      const tip = R + 0.28 * s, base = R - 0.02 * s, half = 0.17 * s;
+      ctx.fillStyle = '#ffe14d';
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * tip, cy + Math.sin(a) * tip);
+      ctx.lineTo(cx + Math.cos(a) * base - Math.sin(a) * half, cy + Math.sin(a) * base + Math.cos(a) * half);
+      ctx.lineTo(cx + Math.cos(a) * base + Math.sin(a) * half, cy + Math.sin(a) * base - Math.cos(a) * half);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   // Shadow: the silhouette as one path (no darker overlaps), offset with the height.

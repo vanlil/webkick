@@ -12,6 +12,7 @@ import { drawPlayer, drawBall } from './render/sprites.js';
 import { drawHud } from './render/hud.js';
 import { createDevPanel } from './devpanel.js';
 import { createMenus } from './ui/menus.js';
+import { createReplay, clearReplay, recordReplay, startReplay, stepReplay, stopReplay } from './replay.js';
 
 loadTuning();
 
@@ -25,6 +26,7 @@ const panel = createDevPanel(() => {
 }, { hidden: true });
 const camera = createCamera(world.ball.x, world.ball.y);
 const audio = createAudio();
+const replay = createReplay(400); // the last 8 seconds
 
 // ?debug in the URL exposes the simulation in the browser console as window.webkick.
 if (new URLSearchParams(location.search).has('debug')) window.webkick = { world, tuning, audio };
@@ -40,9 +42,11 @@ let paused = false;
 let showDebug = false;
 let fullTimeMenuTimer = 0;
 let helpTimer = 0;
+let practice = null; // null (a match), 'skill' or 'penalties'
 
 const menus = createMenus(menuEl, {
-  startMatch() {
+  startMatch(mode = null) {
+    practice = mode;
     configureTeams(world);
     applyOptions(world);
     newMatch();
@@ -55,6 +59,7 @@ const menus = createMenus(menuEl, {
     newMatch();
   },
   quit() {
+    endReplay();
     started = false;
     setPaused(false);
     titleEl.classList.remove('hidden');
@@ -62,6 +67,7 @@ const menus = createMenus(menuEl, {
     menus.open('main');
   },
   resultText,
+  practice: () => practice,
   onChange() {
     applyOptions(world);
     audio.applyVolumes();
@@ -89,12 +95,13 @@ function newMatch() {
   started = true;
   setPaused(false);
   input.reset();
-  createMatch(world);
+  createMatch(world, practice);
+  clearReplay(replay);
   hud.bannerTime = 0;
   fullTimeMenuTimer = 0;
   helpTimer = 20; // the key help at the bottom shows for the first seconds of a match
   audio.whistle();
-  showAction(`Referee: ${world.referee.name}`, 3);
+  showAction(practice ? 'Practice · Esc for the menu' : `Referee: ${world.referee.name}`, 3);
 }
 
 function setPaused(p) {
@@ -120,10 +127,27 @@ const ACTION_LABELS = {
 };
 
 input.onKey('Escape', inMatch(() => {
+  if (replay.active) return endReplay();
   setPaused(true);
   menus.open('pause');
 }));
-input.onKey('KeyP', inMatch(() => setPaused(!paused)));
+input.onKey('KeyP', inMatch(() => { if (!replay.active) setPaused(!paused); }));
+// Replay of the last seconds: R at normal speed, S in slow motion. R/S/Esc/fire end it.
+const toggleReplay = (rate) => inMatch(() => {
+  if (replay.active) return endReplay();
+  if (paused || !startReplay(replay, world, rate)) return;
+  audio.setPaused(true);
+});
+input.onKey('KeyR', toggleReplay(1));
+input.onKey('KeyS', toggleReplay(0.35));
+
+function endReplay() {
+  if (!replay.active) return;
+  stopReplay(replay, world);
+  input.reset();
+  acc = 0;
+  audio.setPaused(paused);
+}
 input.onKey('KeyG', () => panel.toggle());
 input.onKey('KeyI', inMatch(() => { showDebug = !showDebug; }));
 input.onKey('KeyX', inMatch(() => {
@@ -179,6 +203,7 @@ function banner(text, seconds, color) {
 function step() {
   while (commands.length) applyCommand(commands.shift());
   const events = stepWorld(world, input.sample());
+  recordReplay(replay, world);
   audio.handleEvents(events, world, camera);
   for (const e of events) {
     if (e.type === 'goal' && e.team !== undefined) {
@@ -235,16 +260,24 @@ function frame(now) {
   last = now;
   fps += (1 / Math.max(realDt, 1e-3) - fps) * 0.05;
 
-  if (!paused && started) {
+  let alpha = paused ? 1 : acc / DT;
+  if (replay.active) {
+    alpha = stepReplay(replay, world, realDt, DT);
+    if (alpha < 0 || input.sample().firePressed) {
+      endReplay();
+      alpha = 1;
+    }
+  } else if (!paused && started) {
     acc += realDt * tuning.game.speed;
     while (acc >= DT) {
       step();
       acc -= DT;
     }
   }
-  if (started && !paused) audio.update(world, realDt);
+  if (!replay.active) alpha = paused ? 1 : acc / DT;
+  if (started && !paused && !replay.active) audio.update(world, realDt);
   if (helpTimer > 0 && started && !paused) helpTimer -= realDt;
-  render(paused ? 1 : acc / DT, realDt);
+  render(alpha, realDt);
   requestAnimationFrame(frame);
 }
 
@@ -256,7 +289,7 @@ function render(alpha, realDt) {
   const by = lerp(ball.prev.y, ball.y, alpha);
   const bz = lerp(ball.prev.z, ball.z, alpha);
 
-  updateCamera(camera, { x: bx, y: by, vx: ball.vx, vy: ball.vy }, paused ? 0 : realDt, W, H);
+  updateCamera(camera, { x: bx, y: by, vx: ball.vx, vy: ball.vy }, paused && !replay.active ? 0 : realDt, W, H);
   const s = camera.scale;
   const ox = W / 2 - camera.x * s;
   const oy = H / 2 - camera.y * s;
@@ -296,9 +329,11 @@ function render(alpha, realDt) {
     score: world.score,
     clock: gameTime(world.match),
     half: world.match.half,
-    prompt: world.match.phase === 'fulltime' ? null : setPiecePrompt(world),
+    prompt: world.match.phase === 'fulltime' || replay.active ? null : setPiecePrompt(world),
+    replay: replay.active ? replay.active.rate : 0,
     shootout: world.match.shootout,
-    showHelp: helpTimer > 0 || paused,
+    practice: world.match.practice,
+    showHelp: (helpTimer > 0 || paused) && !replay.active,
     hud,
   });
   if (started) drawScanner(ctx, W, H, world, camera, tuning.game.radar);

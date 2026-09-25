@@ -56,10 +56,12 @@ export function configureTeams(world) {
 
 // Re-read options that can change during play (difficulty, tactics).
 export function applyOptions(world) {
-  const cpu = world.teams[1];
-  if (cpu.difficulty !== tuning.game.difficulty) {
-    applyLevel(cpu);
-    applyAttributes(cpu);
+  for (const team of world.teams) {
+    const division = team.id === 0 ? tuning.game.homeLevel : tuning.game.awayLevel;
+    if (team.difficulty !== tuning.game.difficulty || team.division !== division) {
+      applyLevel(team);
+      applyAttributes(team);
+    }
   }
   // A new tactic takes effect at the next stoppage (not in open play).
   world.teams[0].pendingTactic = tuning.game.humanTactic;

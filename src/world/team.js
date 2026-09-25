@@ -1,4 +1,4 @@
-import { PITCH, AI_LEVELS, HUMAN_TEAM, tuning } from '../config.js';
+import { PITCH, AI_LEVELS, TEAM_LEVELS, HUMAN_TEAM, tuning } from '../config.js';
 import { createPlayer } from './player.js';
 import { formationRoles } from '../ai/tactics.js';
 
@@ -42,10 +42,13 @@ export function createTeam({ id, name, human, attackDir, kit, keeperKit, tactic,
   return team;
 }
 
-// Level parameters: the CPU team follows the difficulty option, the human team is fixed.
+// Level parameters: the brain from the difficulty option (the human's team uses its own),
+// the attributes from the team's division.
 export function applyLevel(team) {
   team.difficulty = tuning.game.difficulty;
-  team.level = team.human ? { ...AI_LEVELS.medium, ...HUMAN_TEAM } : AI_LEVELS[tuning.game.difficulty] || AI_LEVELS.medium;
+  team.division = team.id === 0 ? tuning.game.homeLevel : tuning.game.awayLevel;
+  const brain = team.human ? { ...AI_LEVELS.medium, ...HUMAN_TEAM } : AI_LEVELS[team.difficulty] || AI_LEVELS.medium;
+  team.level = { ...brain, ...(TEAM_LEVELS[team.division] || TEAM_LEVELS.first) };
 }
 
 export function applyAttributes(team) {

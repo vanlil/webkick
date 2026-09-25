@@ -49,8 +49,11 @@ export function teamJoysticks(team, world, skip, out) {
       continue;
     }
     if (p === chaser) joy = chase(p, team, world, ball);
-    else if (p === presser) joy = press(p, team, ball);
-    else joy = position(p, team, ball, attacking, world);
+    else {
+      p.ai.plan = null; // not on the ball: forget any plan
+      p.ai.turning = false;
+      joy = p === presser ? press(p, team, ball) : position(p, team, ball, attacking, world);
+    }
     out.set(p, finishJoy(p, joy));
   }
 }
@@ -276,7 +279,8 @@ function withBall(p, team, world) {
 
   ai.decisionTimer -= DT;
   if (ai.planTimer > 0) ai.planTimer -= DT;
-  const busy = ai.turning || (ai.plan === 'pass' && ai.passPhase !== 'approach') || (ai.plan === 'shoot' && ai.planTimer > 0);
+  const busy = ai.turning || (ai.plan === 'pass' && ai.passPhase !== 'approach') ||
+    ((ai.plan === 'shoot' || ai.plan === 'chip') && ai.planTimer > 0);
   if (!busy && (!ai.plan || ai.decisionTimer <= 0)) {
     decide(p, team, world);
     ai.decisionTimer = lvl.decision;
@@ -295,6 +299,8 @@ function withBall(p, team, world) {
     ai.passTimer = 1.3;
     return executeTrap(p, lvl, ball, 'turn');
   }
+
+  if (ai.plan === 'chip') return executeChip(p, ball, ai);
 
   if (ai.plan === 'shoot') {
     const joy = drive(p, ball, ai.dir);
@@ -317,6 +323,22 @@ function decide(p, team, world) {
   const g = oppGoal(team);
   const dGoal = Math.hypot(g.x - ball.x, g.y - ball.y);
   const opponents = world.teams[1 - team.id].players;
+  // A chip needs the ball just in front, in the chip direction (it is played at the next touch).
+  const canChip = (d) => {
+    const bx = ball.x - p.x, by = ball.y - p.y, bd = Math.hypot(bx, by);
+    return bd < 1.8 && bd > 0.01 && (bx * d.x + by * d.y) / bd > 0.7 && Math.hypot(p.vx, p.vy) > 3;
+  };
+
+  // Keeper far off his line: chip it over him.
+  if (dGoal < 24 && rng.next() < lvl.chip) {
+    const chip = chipShot(ball, g, opponents);
+    if (chip && canChip(chip)) {
+      ai.plan = 'chip';
+      ai.dir = chip;
+      ai.planTimer = 1.5;
+      return;
+    }
+  }
 
   if (dGoal < lvl.shootRange) {
     const shot = bestShot(ball, g, opponents, lvl);
@@ -360,6 +382,16 @@ function decide(p, team, world) {
       return;
     }
     const pass = bestPass(p, team, world, g, opponents);
+    // No ground pass: chip it over the defender in the lane, to a free team-mate.
+    if (!pass && rng.next() < lvl.chip) {
+      const chip = bestChip(p, team, world, g, opponents);
+      if (chip && canChip(chip)) {
+        ai.plan = 'chip';
+        ai.dir = chip;
+        ai.planTimer = 1.5;
+        return;
+      }
+    }
     if (pass) {
       ai.plan = 'pass';
       ai.dir = pass;
@@ -427,6 +459,42 @@ function onTarget(p, team, world) {
   return { targetX };
 }
 
+// Chip pass: a free team-mate 12–24 m away (the range of a lob), whose ground lane is blocked.
+function bestChip(p, team, world, g, opponents) {
+  const ball = world.ball;
+  const goalDir = norm(g.x - ball.x, g.y - ball.y);
+  let best = null, bestScore = -Infinity;
+  for (const m of team.players) {
+    if (m === p || m.role === 'keeper' || m.sentOff) continue;
+    const vx = m.x + m.vx * 0.8 - ball.x, vy = m.y + m.vy * 0.8 - ball.y;
+    const d = Math.hypot(vx, vy);
+    if (d < 12 || d > 24) continue;
+    const progress = vx * goalDir.x + vy * goalDir.y;
+    if (progress < 4) continue;
+    const dir = toSectorDir(Math.atan2(vy, vx));
+    const along = vx * dir.x + vy * dir.y;
+    const miss = Math.abs(vx * dir.y - vy * dir.x);
+    if (along <= 0 || miss > 3.5) continue;
+    if (!blocked(ball, dir, along * 0.7, opponents, tuning.ai.laneWidth)) continue; // a ground pass would do
+    let free = 10;
+    for (const o of opponents) free = Math.min(free, Math.hypot(o.x - m.x, o.y - m.y));
+    if (free < 3.5) continue;
+    const score = progress * 0.5 + free - miss;
+    if (score > bestScore) { bestScore = score; best = dir; }
+  }
+  return best;
+}
+
+// Chip shot: the keeper is more than 5 m off his line and the 8-way line ends in the goal.
+function chipShot(ball, g, opponents) {
+  const keeper = opponents[0];
+  if (Math.abs(keeper.y - g.y) < 5) return null;
+  const d = toSectorDir(Math.atan2(g.y - ball.y, g.x - ball.x));
+  if (Math.abs(d.y) < 0.1) return null;
+  const x = ball.x + (d.x / d.y) * (g.y - ball.y);
+  return x > GOAL_X0 + 0.5 && x < GOAL_X1 - 0.5 ? d : null;
+}
+
 // A team-mate reachable with a ground pass along one of the 8 directions.
 function bestPass(p, team, world, g, opponents, maxDist = tuning.ai.passMaxDist) {
   const ball = world.ball;
@@ -475,6 +543,20 @@ function bestDribble(p, ball, g, opponents, current) {
     if (score > bestScore) { bestScore = score; best = d; }
   }
   return best;
+}
+
+// A chip is a lob: run at the ball in the wanted direction and pull the stick back just before
+// the touch (the same move as a human). The ball then goes high in the running direction.
+function executeChip(p, ball, ai) {
+  const cfg = tuning.player;
+  const speed = Math.hypot(p.vx, p.vy);
+  const aligned = speed > 0.5 && (p.vx * ai.dir.x + p.vy * ai.dir.y) / speed > 0.9;
+  const d = Math.hypot(ball.x - p.x, ball.y - p.y);
+  if (aligned && speed > tuning.kick.lobMinSpeed + 1 && ball.z < 0.3 && d < cfg.footReach + cfg.touchRadius + 0.35) {
+    const back = toSector(Math.atan2(-ai.dir.y, -ai.dir.x));
+    return { dx: back.dx, dy: back.dy, fire: false, reverse: true };
+  }
+  return drive(p, ball, ai.dir);
 }
 
 // Trap, aim, release: the same steps a human uses. mode 'pass' releases fire with the stick

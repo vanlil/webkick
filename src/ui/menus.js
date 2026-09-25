@@ -1,4 +1,4 @@
-import { tuning, saveTuning, DEFAULTS, AI_LEVELS, TACTIC_NAMES, HALF_MINUTES, PITCH_TYPE_NAMES, WIND_LEVELS } from '../config.js';
+import { tuning, saveTuning, DEFAULTS, AI_LEVELS, TEAM_LEVELS, TEAM_LEVEL_NAMES, TACTIC_NAMES, HALF_MINUTES, PITCH_TYPE_NAMES, WIND_LEVELS } from '../config.js';
 import { TEAMS, PALETTE } from '../data/teams.js';
 import { formationRoles } from '../ai/tactics.js';
 
@@ -40,6 +40,7 @@ export function createMenus(root, actions) {
       title: 'Main menu',
       items: [
         { type: 'action', label: 'Play match', run: () => push('setup') },
+        { type: 'action', label: 'Practice', run: () => push('practice') },
         { type: 'action', label: 'Options', run: () => push('options') },
         { type: 'action', label: 'Controls', run: () => push('controls') },
       ],
@@ -64,7 +65,9 @@ export function createMenus(root, actions) {
             t.stripes = v === 'plain' ? '' : (t.shorts !== t.shirt ? t.shorts : '#ffffff');
           }),
         choice('Opponent', opponents(), opponents().map((i) => TEAMS[i].name), () => t.away, (v) => { t.away = v; }),
-        choice('CPU difficulty', Object.keys(AI_LEVELS), null, () => g.difficulty, (v) => { g.difficulty = v; }),
+        choice('Your team level', Object.keys(TEAM_LEVELS), Object.values(TEAM_LEVEL_NAMES), () => g.homeLevel, (v) => { g.homeLevel = v; }),
+        choice('Opponent level', Object.keys(TEAM_LEVELS), Object.values(TEAM_LEVEL_NAMES), () => g.awayLevel, (v) => { g.awayLevel = v; }),
+        choice('CPU skill (how it plays)', Object.keys(AI_LEVELS), null, () => g.difficulty, (v) => { g.difficulty = v; }),
         choice('Your tactic', TACTIC_NAMES, null, () => g.humanTactic, (v) => { g.humanTactic = v; }),
         choice('Control', ['nearest', 'fixed'], ['nearest to the ball', 'fixed player'], () => g.control, (v) => { g.control = v; }),
       ];
@@ -77,6 +80,16 @@ export function createMenus(root, actions) {
       items.push({ type: 'action', label: 'Back', run: back });
       return { title: 'Match setup', items };
     },
+
+    practice: () => ({
+      title: 'Practice',
+      items: [
+        { type: 'action', label: 'Skill: dribble, pass and shoot', run: () => actions.startMatch('skill'), primary: true },
+        { type: 'action', label: 'Penalties: shoot-out against the CPU', run: () => actions.startMatch('penalties') },
+        { type: 'info', label: 'Teams', value: 'from Match setup' },
+        { type: 'action', label: 'Back', run: back },
+      ],
+    }),
 
     options: () => {
       const g = tuning.game;
@@ -106,6 +119,7 @@ export function createMenus(root, actions) {
         { type: 'action', label: 'Reset keys', run: () => { Object.assign(tuning.keys, DEFAULTS.keys); changed(); render(); } },
         { type: 'info', label: 'Esc', value: 'menu / pause' },
         { type: 'info', label: 'P · X · M', value: 'pause · radar size · sound' },
+        { type: 'info', label: 'R · S', value: 'replay · slow-motion replay' },
         { type: 'info', label: '1 – 4', value: 'tactic (from the next stoppage)' },
         { type: 'info', label: 'G', value: 'tuning panel (for developers)' },
         { type: 'action', label: 'Back', run: back },
@@ -116,7 +130,7 @@ export function createMenus(root, actions) {
       title: 'Paused',
       items: [
         { type: 'action', label: 'Resume', run: () => actions.resume(), primary: true },
-        { type: 'action', label: 'Restart match', run: () => actions.restart() },
+        { type: 'action', label: actions.practice() ? 'Restart practice' : 'Restart match', run: () => actions.restart() },
         { type: 'action', label: 'Options', run: () => push('options') },
         { type: 'action', label: 'Controls', run: () => push('controls') },
         { type: 'action', label: 'Quit to main menu', run: () => actions.quit() },
@@ -127,7 +141,7 @@ export function createMenus(root, actions) {
     fulltime: () => ({
       title: actions.resultText(),
       items: [
-        { type: 'action', label: 'New match', run: () => actions.restart(), primary: true },
+        { type: 'action', label: actions.practice() ? 'Again' : 'New match', run: () => actions.restart(), primary: true },
         { type: 'action', label: 'Main menu', run: () => actions.quit() },
       ],
     }),
