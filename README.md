@@ -5,12 +5,15 @@ no build step, no backend.
 
 ## Run
 
-Serve the folder with any static web server (ES modules do not load from `file://`):
+Serve the folder with any static web server (ES modules do not load from `file://`).
+With the .NET SDK installed, use [dotnet-serve](https://github.com/natemcmaster/dotnet-serve):
 
 ```sh
-python3 -m http.server 8000
-# then open http://localhost:8000
+dotnet tool install --global dotnet-serve   # once
+dotnet serve -o                             # in the project folder; opens http://localhost:8080
 ```
+
+Use `-p <port>` for another port.
 
 ## Status
 
