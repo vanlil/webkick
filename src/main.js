@@ -1,8 +1,6 @@
-import { DT, PITCH, tuning, loadTuning } from './config.js';
+import { DT, PITCH, TACTIC_NAMES, tuning, loadTuning, saveTuning } from './config.js';
 import { createInput } from './input.js';
-import { createRng } from './rng.js';
-import { createBall, stepBall } from './world/ball.js';
-import { createPlayer, stepPlayer, playerSpeed } from './world/player.js';
+import { createWorld, stepWorld, applyOptions, startFromCentre, playerSpeed } from './world/world.js';
 import { createCamera, updateCamera, snapCamera } from './render/camera.js';
 import { drawPitch, drawGoal } from './render/pitch.js';
 import { drawPlayer, drawBall } from './render/sprites.js';
@@ -14,15 +12,9 @@ loadTuning();
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d', { alpha: false });
 const input = createInput(window);
-const panel = createDevPanel();
-
-const HOME_KIT = { shirt: '#d8323c', shorts: '#ffffff', socks: '#d8323c', skin: '#e8b48f', hair: '#3b2a1e' };
-
-// --- World (M1: one player and the ball) ---------------------------------------------------
-const rng = createRng(20260925);
-const ball = createBall(PITCH.width / 2, PITCH.length / 2);
-const player = createPlayer({ x: PITCH.width / 2, y: PITCH.length / 2 + 2, kit: HOME_KIT });
-const camera = createCamera(ball.x, ball.y);
+const world = createWorld();
+const panel = createDevPanel(() => applyOptions(world));
+const camera = createCamera(world.ball.x, world.ball.y);
 
 // Dev commands are queued and applied at the start of the next simulation step.
 const commands = [];
@@ -31,67 +23,63 @@ let showDebug = true;
 
 // Messages for the HUD: a big banner (GOAL) and a small line for the last action.
 const hud = { banner: '', bannerTime: 0, action: '', actionTime: 0 };
-let goalTimer = 0;
-const score = [0, 0];
 
 const ACTION_LABELS = {
   shot: 'Shot', pass: 'Pass', lob: 'Lob', header: 'Header', overhead: 'Overhead kick',
-  flick: 'Flick', trap: 'Trap', post: 'Post!', bar: 'Crossbar!',
+  flick: 'Flick', post: 'Post!', bar: 'Crossbar!', save: 'Save!', catch: 'Caught',
+  throwin: 'Throw-in', corner: 'Corner', goalkick: 'Goal kick',
 };
 
 input.onKey('KeyP', () => { paused = !paused; });
 input.onKey('KeyG', () => panel.toggle());
 input.onKey('KeyI', () => { showDebug = !showDebug; });
-input.onKey('KeyR', () => commands.push('reset'));
+input.onKey('KeyR', () => commands.push('restart'));
 input.onKey('KeyL', () => commands.push('highball'));
+// Tactics of the human team (keys 1–4).
+TACTIC_NAMES.forEach((name, i) => input.onKey(`Digit${i + 1}`, () => {
+  tuning.game.humanTactic = name;
+  saveTuning();
+  applyOptions(world);
+  panel.refresh();
+  showAction(`Tactic ${name}`);
+}));
 
 function applyCommand(cmd) {
-  const fx = player.fx, fy = player.fy;
-  if (cmd === 'reset') {
-    Object.assign(ball, { x: player.x + fx * 1.2, y: player.y + fy * 1.2, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, inGoal: -1 });
-  } else if (cmd === 'restart') {
-    Object.assign(ball, { x: PITCH.width / 2, y: PITCH.length / 2, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, inGoal: -1 });
-    Object.assign(player, { x: PITCH.width / 2, y: PITCH.length / 2 + 1.5, vx: 0, vy: 0, fx: 0, fy: -1, state: 'run', z: 0 });
-    player.prev.x = player.x;
-    player.prev.y = player.y;
+  const { ball } = world;
+  const p = world.human.player;
+  if (cmd === 'restart') {
+    startFromCentre(world, 0);
   } else if (cmd === 'highball') {
-    // A high ball dropping about 10 m in front of the player, to practise running onto it.
-    Object.assign(ball, { x: player.x + fx * 16, y: player.y + fy * 16, z: 1, vx: -fx * 5, vy: -fy * 5, vz: 13, spin: 0, inGoal: -1 });
+    // A high ball dropping in front of the controlled player, to practise headers.
+    Object.assign(ball, {
+      x: p.x + p.fx * 16, y: p.y + p.fy * 16, z: 1, vx: -p.fx * 5, vy: -p.fy * 5, vz: 13,
+      spin: 0, inGoal: -1, heldBy: null,
+    });
+    world.restart = null;
+    ball.prev.x = ball.x;
+    ball.prev.y = ball.y;
+    ball.prev.z = ball.z;
   }
-  ball.prev.x = ball.x;
-  ball.prev.y = ball.y;
-  ball.prev.z = ball.z;
+}
+
+function showAction(text) {
+  hud.action = text;
+  hud.actionTime = 1.5;
 }
 
 function step() {
   while (commands.length) applyCommand(commands.shift());
-  const events = [];
-  const joy = input.sample();
-  stepPlayer(player, joy, { ball, rng, events });
-  stepBall(ball, rng, events);
-  handleEvents(events);
-
-  if (goalTimer > 0) {
-    goalTimer -= DT;
-    if (goalTimer <= 0) applyCommand('restart');
+  const events = stepWorld(world, input.sample());
+  for (const e of events) {
+    if (e.type === 'goal' && e.team !== undefined) {
+      hud.banner = 'GOAL!';
+      hud.bannerTime = tuning.goal.resetDelay;
+    } else if (ACTION_LABELS[e.type]) {
+      showAction(ACTION_LABELS[e.type] + (e.speed ? `  ${Math.round(e.speed * 3.6)} km/h` : ''));
+    }
   }
   if (hud.bannerTime > 0) hud.bannerTime -= DT;
   if (hud.actionTime > 0) hud.actionTime -= DT;
-}
-
-function handleEvents(events) {
-  for (const e of events) {
-    if (e.type === 'goal') {
-      score[e.goal]++;
-      hud.banner = 'GOAL!';
-      hud.bannerTime = tuning.goal.resetDelay;
-      goalTimer = tuning.goal.resetDelay;
-    } else if (ACTION_LABELS[e.type]) {
-      const kmh = e.speed ? `  ${Math.round(e.speed * 3.6)} km/h` : '';
-      hud.action = ACTION_LABELS[e.type] + kmh;
-      hud.actionTime = 1.5;
-    }
-  }
 }
 
 // --- Canvas sizing (native resolution) -----------------------------------------------------
@@ -132,11 +120,10 @@ function frame(now) {
 const lerp = (a, b, t) => a + (b - a) * t;
 
 function render(alpha, realDt) {
+  const { ball } = world;
   const bx = lerp(ball.prev.x, ball.x, alpha);
   const by = lerp(ball.prev.y, ball.y, alpha);
   const bz = lerp(ball.prev.z, ball.z, alpha);
-  const px = lerp(player.prev.x, player.x, alpha);
-  const py = lerp(player.prev.y, player.y, alpha);
 
   updateCamera(camera, { x: bx, y: by, vx: ball.vx, vy: ball.vy }, paused ? 0 : realDt, W, H);
   const s = camera.scale;
@@ -148,12 +135,19 @@ function render(alpha, realDt) {
   drawPitch(ctx, view);
   drawGoal(ctx, view, true);
 
-  // Painter's order: things further up the pitch are drawn first.
-  const drawables = [
-    { y: py, draw: () => drawPlayer(ctx, view, player, px, py, { active: true }) },
-    { y: by, draw: () => drawBall(ctx, view, ball, bx, by, bz) },
-  ].sort((a, b) => a.y - b.y);
-  drawables.forEach((d) => d.draw());
+  // Painter's order: things further up the pitch are drawn first. Off-screen players are skipped.
+  const margin = 3;
+  const minX = camera.x - camera.viewW / 2 - margin, maxX = camera.x + camera.viewW / 2 + margin;
+  const minY = camera.y - camera.viewH / 2 - margin, maxY = camera.y + camera.viewH / 2 + margin;
+  const drawables = [{ y: by, draw: () => drawBall(ctx, view, ball, bx, by, bz) }];
+  const active = world.human && world.human.player;
+  for (const p of world.players) {
+    const px = lerp(p.prev.x, p.x, alpha);
+    const py = lerp(p.prev.y, p.y, alpha);
+    if (px < minX || px > maxX || py < minY || py > maxY) continue;
+    drawables.push({ y: py, draw: () => drawPlayer(ctx, view, p, px, py, { active: p === active }) });
+  }
+  drawables.sort((a, b) => a.y - b.y).forEach((d) => d.draw());
 
   drawGoal(ctx, view, false);
   drawHud(ctx, W, H, {
@@ -163,12 +157,13 @@ function render(alpha, realDt) {
     ballSpeed: Math.hypot(ball.vx, ball.vy),
     ballZ: ball.z,
     ballSpin: ball.spin,
-    playerSpeed: playerSpeed(player),
-    playerState: player.state,
-    score,
+    playerSpeed: active ? playerSpeed(active) : 0,
+    playerState: active ? active.state : '-',
+    teams: world.teams,
+    score: world.score,
     hud,
   });
 }
 
-snapCamera(camera, ball.x, ball.y);
+snapCamera(camera, PITCH.width / 2, PITCH.length / 2);
 requestAnimationFrame(frame);

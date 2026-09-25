@@ -40,6 +40,21 @@ const PITCH_TYPES = {
   bumpy:      { rollFriction: 1.8, rollDrag: 0.40, restitution: 0.55, bounceGrip: 0.85, airDragMul: 1.0, bumpiness: 0.45, staminaMul: 1.1 },
 };
 
+// CPU difficulty. reaction: how old the ball information is that the AI acts on (s);
+// decision: time between decisions when on the ball (s); aftertouch: chance to bend a shot;
+// chasers: players going for the ball (2 = one presses the ball carrier);
+// skill/pace: base attributes of the players; keeper*: goalkeeper reaction and skill.
+export const AI_LEVELS = {
+  easy:   { reaction: 0.40, decision: 0.45, shootRange: 17, aftertouch: 0.0, passAim: 0.25, chasers: 1, headers: false, skill: 0.60, pace: 0.92, keeperReaction: 0.32, keeperSkill: 0.55 },
+  medium: { reaction: 0.22, decision: 0.28, shootRange: 22, aftertouch: 0.5, passAim: 0.15, chasers: 2, headers: true,  skill: 0.80, pace: 0.97, keeperReaction: 0.22, keeperSkill: 0.75 },
+  hard:   { reaction: 0.10, decision: 0.15, shootRange: 27, aftertouch: 1.0, passAim: 0.08, chasers: 2, headers: true,  skill: 0.95, pace: 1.02, keeperReaction: 0.14, keeperSkill: 0.90 },
+};
+
+// The human team: fixed attributes; its CPU-controlled keeper and team-mates use these.
+export const HUMAN_TEAM = { reaction: 0.2, skill: 0.85, pace: 1.0, keeperReaction: 0.22, keeperSkill: 0.75 };
+
+export const TACTIC_NAMES = ['4-4-2', '4-3-3', '4-2-4', '5-3-2'];
+
 // Wind presets (m/s), airborne ball only.
 export const WIND_LEVELS = { none: 0, light: 2, medium: 4, strong: 6 };
 
@@ -50,6 +65,9 @@ export const DEFAULTS = {
     wind: 'none',
     windDirDeg: 90,       // direction the wind blows TO; 0 = up the screen, 90 = right
     aftertouch: true,
+    difficulty: 'medium', // CPU opponent: easy / medium / hard
+    humanTactic: '4-4-2',
+    cpuTactic: '4-4-2',
   },
   ball: {
     gravity: 9.81,
@@ -98,6 +116,26 @@ export const DEFAULTS = {
     overheadSpeed: 17,
     overheadLift: 3.5,
     overheadTime: 0.9,    // time on the ground after an overhead kick
+  },
+  keeper: {
+    speed: 6.0,
+    accel: 30,
+    reach: 0.8,           // catching reach when standing (m)
+    diveReach: 1.2,       // catching reach when diving
+    diveSpeed: 7.5,
+    diveTime: 0.45,
+    downTime: 0.9,        // time on the ground after a dive
+    catchHeight: 2.6,
+    holdTime: 1.4,        // seconds before the keeper throws or kicks the ball out
+    kickSpeed: 23,
+    kickLift: 11,
+  },
+  ai: {
+    passMinDist: 7,
+    passMaxDist: 24,
+    pressureDist: 7,      // an opponent this close = under pressure → look for a pass
+    laneWidth: 1.8,       // an opponent this close to the pass line blocks it
+    switchMargin: 1.5,    // human control switches when another player is this much closer to the ball
   },
   goal: {
     postRadius: 0.06,

@@ -1,7 +1,7 @@
 import { tuning } from '../config.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-const HELP = 'Arrows: run   Space: fire (shoot / hold to trap and pass)   L: high ball   R: reset ball   P: pause   G: tuning   I: info';
+const HELP = 'Arrows: run   Space: fire (shoot / hold to trap and pass)   1–4: tactic   L: high ball   R: kick-off   P: pause   G: tuning   I: info';
 
 export function drawHud(ctx, W, H, info) {
   ctx.save();
@@ -13,18 +13,12 @@ export function drawHud(ctx, W, H, info) {
       `ball ${(info.ballSpeed * 3.6).toFixed(0)} km/h  height ${info.ballZ.toFixed(2)} m  spin ${info.ballSpin.toFixed(2)}`,
       `player ${(info.playerSpeed * 3.6).toFixed(0)} km/h  ${info.playerState}`,
       `pitch ${tuning.game.pitchType}  wind ${tuning.game.wind}  speed ×${tuning.game.speed}  aftertouch ${tuning.game.aftertouch ? 'on' : 'off'}`,
+      `CPU ${tuning.game.difficulty}  tactics ${tuning.game.humanTactic} vs ${tuning.game.cpuTactic}`,
     ];
     panel(ctx, 12, 12, lines, 13);
   }
 
-  // Goals scored in the top and bottom goal (no teams yet).
-  const score = `▲ ${info.score[0]}   ▼ ${info.score[1]}`;
-  ctx.font = `700 18px ${FONT}`;
-  const sw = ctx.measureText(score).width + 28;
-  pill(ctx, (W - sw) / 2, 12, sw, 32);
-  ctx.fillStyle = '#fff';
-  ctx.textAlign = 'center';
-  ctx.fillText(score, W / 2, 19);
+  drawScore(ctx, W, info.teams, info.score);
 
   const { hud } = info;
   if (hud.actionTime > 0) {
@@ -67,6 +61,29 @@ export function drawHud(ctx, W, H, info) {
     ctx.fillText('PAUSED', W / 2, H / 2);
   }
   ctx.restore();
+}
+
+// "RED 1 : 0 BLUE" with kit colour swatches.
+function drawScore(ctx, W, teams, score) {
+  ctx.font = `700 18px ${FONT}`;
+  const text = `${teams[0].name.toUpperCase()}  ${score[0]} : ${score[1]}  ${teams[1].name.toUpperCase()}`;
+  const tw = ctx.measureText(text).width;
+  const w = tw + 64;
+  const x = (W - w) / 2;
+  pill(ctx, x, 12, w, 32);
+  const swatch = (sx, kit) => {
+    ctx.fillStyle = kit.shirt;
+    ctx.beginPath();
+    ctx.roundRect(sx, 21, 14, 14, 3);
+    ctx.fill();
+    ctx.fillStyle = kit.shorts;
+    ctx.fillRect(sx, 31, 14, 4);
+  };
+  swatch(x + 12, teams[0].kit);
+  swatch(x + w - 26, teams[1].kit);
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, W / 2, 19);
 }
 
 function pill(ctx, x, y, w, h) {

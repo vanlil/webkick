@@ -1,11 +1,20 @@
 import GUI from '../vendor/lil-gui.esm.min.js';
-import { PITCH_TYPE_NAMES, WIND_LEVELS, tuning, saveTuning, resetTuning, currentSurface } from './config.js';
+import { PITCH_TYPE_NAMES, WIND_LEVELS, AI_LEVELS, TACTIC_NAMES, tuning, saveTuning, resetTuning, currentSurface } from './config.js';
 
 // Live tuning panel. Every change is saved to localStorage. "Copy settings" puts the current
 // values on the clipboard as JSON, so good values can be moved into config.js.
-export function createDevPanel() {
+// `onChange` is called after every change, so the game can apply options at once.
+export function createDevPanel(onChange = () => {}) {
   const gui = new GUI({ title: 'Tuning (G)' });
-  gui.onChange(saveTuning);
+  gui.onChange(() => {
+    saveTuning();
+    onChange();
+  });
+
+  const match = gui.addFolder('Match');
+  match.add(tuning.game, 'difficulty', Object.keys(AI_LEVELS)).name('CPU difficulty');
+  match.add(tuning.game, 'humanTactic', TACTIC_NAMES).name('your tactic (1–4)');
+  match.add(tuning.game, 'cpuTactic', TACTIC_NAMES).name('CPU tactic');
 
   const game = gui.addFolder('Game');
   game.add(tuning.game, 'speed', { normal: 1, reduced: 0.75, slow: 0.5 });
@@ -45,6 +54,20 @@ export function createDevPanel() {
   kick.add(k, 'jumpTime', 0.2, 1, 0.01).name('jump time');
   kick.add(k, 'overheadSpeed', 5, 30, 0.5).name('overhead speed');
   kick.close();
+
+  const keeper = gui.addFolder('Keeper');
+  keeper.add(tuning.keeper, 'speed', 2, 10, 0.1);
+  keeper.add(tuning.keeper, 'reach', 0.3, 2, 0.05);
+  keeper.add(tuning.keeper, 'diveReach', 0.5, 2.5, 0.05).name('dive reach');
+  keeper.add(tuning.keeper, 'diveSpeed', 2, 12, 0.1).name('dive speed');
+  keeper.add(tuning.keeper, 'holdTime', 0.3, 4, 0.1).name('hold time');
+  keeper.close();
+
+  const ai = gui.addFolder('AI');
+  ai.add(tuning.ai, 'pressureDist', 1, 15, 0.5).name('pressure distance');
+  ai.add(tuning.ai, 'passMaxDist', 10, 40, 1).name('max pass distance');
+  ai.add(tuning.ai, 'switchMargin', 0, 5, 0.1).name('switch margin');
+  ai.close();
 
   const goal = gui.addFolder('Goal');
   goal.add(tuning.goal, 'postRestitution', 0, 1, 0.01).name('post bounce');
@@ -96,6 +119,7 @@ export function createDevPanel() {
       resetTuning();
       gui.controllersRecursive().forEach((c) => c.updateDisplay());
       bindSurface();
+      onChange();
     },
   };
   gui.add(actions, 'copy').name('Copy settings (JSON)');
@@ -103,6 +127,9 @@ export function createDevPanel() {
 
   let visible = true;
   return {
+    refresh() {
+      gui.controllersRecursive().forEach((c) => c.updateDisplay());
+    },
     toggle() {
       visible = !visible;
       gui.show(visible);

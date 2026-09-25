@@ -41,7 +41,7 @@ function joyDir(joy) {
 const dot = (a, b) => a.x * b.x + a.y * b.y;
 
 // One simulation step for a human-controlled player: movement and all ball actions.
-// `world` = { ball, rng, events }.
+// `world` = { ball, rng, events, step }.
 export function stepPlayer(p, joy, world) {
   p.prev.x = p.x;
   p.prev.y = p.y;
@@ -68,7 +68,8 @@ function stepRun(p, joy, dir, world) {
 
   // Stick pulled against the running direction, just as the ball is reached: lob or
   // overhead kick. Checked before moving, because moving turns the player round.
-  if (dir && moveDir && dot(dir, moveDir) < REVERSED && p.touchTimer <= 0) {
+  // `noReverse`: the AI sets it so a change of direction is never read as a lob.
+  if (!joy.noReverse && dir && moveDir && dot(dir, moveDir) < REVERSED && p.touchTimer <= 0 && canTouch(p, ball, world)) {
     const fx = p.x + moveDir.x * cfg.footReach;
     const fy = p.y + moveDir.y * cfg.footReach;
     const d = Math.hypot(ball.x - fx, ball.y - fy);
@@ -84,7 +85,7 @@ function stepRun(p, joy, dir, world) {
 
   move(p, dir);
 
-  if (joy.firePressed) {
+  if (joy.firePressed && canTouch(p, ball, world)) {
     const k = tuning.kick;
     const foot = footPoint(p);
     // Fire just after a touch: shot in the facing direction.
@@ -113,14 +114,14 @@ function footContact(p, joy, world) {
   const foot = footPoint(p);
   const speed = playerSpeed(p);
 
-  if (p.touchTimer <= 0 && ball.z < cfg.touchMaxHeight && Math.hypot(ball.x - foot.x, ball.y - foot.y) < cfg.touchRadius) {
+  if (p.touchTimer <= 0 && canTouch(p, ball, world) && ball.z < cfg.touchMaxHeight && Math.hypot(ball.x - foot.x, ball.y - foot.y) < cfg.touchRadius) {
     if (joy.fire) {
       p.state = 'trap';
       p.trapDir = { x: p.fx, y: p.fy };
       p.flickTimer = 0;
       p.vx = p.vy = 0;
       stopBall(ball);
-      touched(p, ball);
+      touched(p, ball, world);
       events.push({ type: 'trap' });
       return;
     }
@@ -132,20 +133,21 @@ function footContact(p, joy, world) {
       ball.vz = 0;
       ball.z = 0;
       ball.spin = 0;
-      touched(p, ball);
+      touched(p, ball, world);
       p.touchTimer = cfg.touchCooldown;
       p.shotWindow = tuning.kick.shotWindow;
       events.push({ type: 'touch' });
       return;
     }
   }
-  bodyBlock(p, ball, events);
+  bodyBlock(p, ball, world);
 }
 
 // Ball bounces off the body (legs up to chest height), losing most of its speed.
-function bodyBlock(p, ball, events) {
+export function bodyBlock(p, ball, world) {
   const cfg = tuning.player;
-  if (p.kickTimer > 0 || ball.z > 1.8 + p.z) return; // never block your own kick
+  if (p.kickTimer > 0 || ball.z > 1.8 + p.z || !canTouch(p, ball, world)) return; // never block your own kick
+  const { events } = world;
   const dx = ball.x - p.x;
   const dy = ball.y - p.y;
   const d = Math.hypot(dx, dy);
@@ -161,7 +163,7 @@ function bodyBlock(p, ball, events) {
     ball.vy = p.vy + (relVy - 2 * vn * ny) * k;
     ball.vz *= 0.3;
     ball.spin = 0;
-    touched(p, ball);
+    touched(p, ball, world);
     events.push({ type: 'block' });
   }
   ball.x = p.x + nx * minD;
@@ -176,7 +178,7 @@ function stepTrap(p, joy, dir, world) {
   p.vx = p.vy = 0;
 
   // Ball knocked away (later: by an opponent) → back to normal play.
-  if (Math.hypot(ball.x - p.x, ball.y - p.y) > cfg.footReach + 0.6 || isAirborne(ball)) {
+  if (Math.hypot(ball.x - p.x, ball.y - p.y) > cfg.footReach + 0.6 || isAirborne(ball) || ball.lastTouch !== p) {
     p.state = 'run';
     return;
   }
@@ -203,7 +205,7 @@ function stepTrap(p, joy, dir, world) {
       ball.vz = tuning.kick.flickLift;
       p.fx = p.trapDir.x;
       p.fy = p.trapDir.y;
-      touched(p, ball);
+      touched(p, ball, world);
       p.touchTimer = 0.4;
       p.kickTimer = 0.25;
       world.events.push({ type: 'flick' });
@@ -226,7 +228,7 @@ function stepJump(p, world) {
   p.x += p.vx * DT;
   p.y += p.vy * DT;
 
-  if (!p.headed) {
+  if (!p.headed && canTouch(p, ball, world)) {
     const hx = p.x + p.fx * 0.15;
     const hy = p.y + p.fy * 0.15;
     const headZ = 1.7 + p.z;
@@ -241,7 +243,7 @@ function stepJump(p, world) {
       p.fx = d.x;
       p.fy = d.y;
       p.headed = true;
-      touched(p, ball);
+      touched(p, ball, world);
       events.push({ type: 'header', speed: k.headerSpeed });
     }
   }
@@ -250,7 +252,7 @@ function stepJump(p, world) {
     p.z = 0;
     p.touchTimer = 0.1;
   }
-  bodyBlock(p, ball, events);
+  bodyBlock(p, ball, world);
 }
 
 function overheadKick(p, ball, dir, world) {
@@ -284,8 +286,8 @@ function kick(p, ball, d, speed, lift, skill, world, kind) {
   ball.vy = dy * speed;
   ball.vz = lift;
   ball.spin = 0;
-  touched(p, ball);
-  p.aftertouch = { time: k.aftertouchTime, dx, dy, seq: ball.touchSeq };
+  touched(p, ball, world);
+  p.aftertouch = { time: k.aftertouchTime, dx, dy, seq: ball.touchSeq, kind };
   p.kickTimer = 0.2;
   p.touchTimer = 0.3;
   p.shotWindow = 0;
@@ -360,7 +362,13 @@ function stopBall(ball) {
   ball.spin = 0;
 }
 
-function touched(p, ball) {
+function touched(p, ball, world) {
   ball.touchSeq++;
   ball.lastTouch = p;
+  ball.touchStep = world.step;
+}
+
+// The ball can be played unless a keeper holds it or another player touched it this step.
+export function canTouch(p, ball, world) {
+  return !ball.heldBy && !(ball.touchStep === world.step && ball.lastTouch !== p);
 }

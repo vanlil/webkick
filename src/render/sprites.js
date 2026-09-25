@@ -40,6 +40,16 @@ export function drawPlayer(ctx, view, p, x, y, { active = false } = {}) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
+  // A diving keeper: rotate the whole body round the hips.
+  const tilted = !!p.diveAngle;
+  if (tilted) {
+    const [hx, hy] = P(0, 0, 0.9);
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.rotate(p.diveAngle);
+    ctx.translate(-hx, -hy);
+  }
+
   // Legs: hip → knee (skin), knee → foot (sock), boot. Far leg first.
   const legs = [
     { side: 1, swing },
@@ -117,6 +127,7 @@ export function drawPlayer(ctx, view, p, x, y, { active = false } = {}) {
   ctx.beginPath();
   ctx.arc(hX, hY, r, 0, Math.PI * 2);
   ctx.stroke();
+  if (tilted) ctx.restore();
 }
 
 export function drawBall(ctx, view, ball, x, y, z) {
