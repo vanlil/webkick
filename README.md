@@ -22,28 +22,14 @@ dotnet serve -o                             # in the project folder; opens http:
 
 Use `-p <port>` for another port.
 
-## Status
-
-Latest: practice mode (skill training against a keeper, penalty shoot-out), action replay
-(R / S), CPU chip passes and chip shots, and a direction arrow on your player. Team strength
-("Your team level", "Opponent level": international to 4th division) is now separate from
-"CPU skill" (how the computer plays: easy / medium / hard).
-
-Milestone 7 (menus and options): main menu, match setup (teams, kit colours and stripes,
-CPU skill, team levels, tactic, control mode "nearest to the ball" or "fixed player"), options (match
-length, pitch, grass pattern, wind, speed, aftertouch, referee, extra time / penalties, sound, radar),
-remappable keys, pause menu, shadows for goals and corner flags. Earlier: sliding tackles,
-referee, cards, free kicks, penalties, sound, full matches with set pieces, 11 against 11 with
-tactics, goalkeepers and a CPU opponent.
-
 ## Controls
 
 | Input | Action |
 |---|---|
 | Arrow keys (remappable) | Run (8 directions). Run into the ball to push it ahead. You control the red player nearest to the ball (yellow ring). |
-| Space (or Right Ctrl) just **after** touching the ball | Shoot in the running direction |
+| Space (or Right Ctrl) just **after** touching the ball | Shoot in the running direction (away from the goal it is a long ball) |
 | Space held **before** reaching the ball | Trap: the ball stops at your feet |
-| In trap: direction + release Space | Pass in that direction (release with no direction = dribble on) |
+| In trap: direction + release Space | Pass in that direction (release with no direction = dribble on). Hold the direction longer for a harder, longer pass: quick = about 20 m, about 1 s = about 45 m. The arrow on your player grows and turns orange with the power |
 | In trap: forward, then back while releasing Space | Flick the ball up |
 | Pull back just as you reach the ball | Lob |
 | Right after any kick: arrow sideways / diagonal forward | Aftertouch: bend the ball |

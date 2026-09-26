@@ -23,6 +23,7 @@ export function createPlayer({ x, y, kit, pace = 1.0, shooting = 0.8, passing = 
     headed: false,
     trapDir: null,      // facing when the ball was trapped (for the flick)
     flickTimer: 0,      // time left after pushing the stick forward in trap mode
+    passHold: 0,        // trap mode: how long the stick has pointed in the pass direction
     aftertouch: null,   // { time, dx, dy, seq } while the last kick can still be bent
     prev: { x, y, z: 0 },
   };
@@ -94,7 +95,7 @@ function stepRun(p, joy, dir, world) {
     // Fire just after a touch: shot in the facing direction.
     if (p.shotWindow > 0 && ball.z < 0.6 && Math.hypot(ball.x - foot.x, ball.y - foot.y) < k.shotReach) {
       const power = k.shotSpeed * (0.75 + 0.25 * p.shooting) + playerSpeed(p) * k.runBonus;
-      kick(p, ball, { x: p.fx, y: p.fy }, power, k.shotLift, p.shooting, world, 'shot');
+      kick(p, ball, { x: p.fx, y: p.fy }, power, k.shotLift, p.shooting, world, aimedAtGoal(p, ball, world) ? 'shot' : 'longball');
       return;
     }
     // Fire with the ball in the air nearby: jump for a header.
@@ -152,6 +153,7 @@ function trap(p, ball, world) {
   p.state = 'trap';
   p.trapDir = { x: p.fx, y: p.fy };
   p.trapAim = null;
+  p.passHold = 0;
   p.flickTimer = 0;
   p.vx = p.vy = 0;
   // The ball stops where it is (the player steps to it); a high ball drops.
@@ -282,6 +284,9 @@ function stepTrap(p, joy, dir, world) {
   // Turn towards the chosen direction at a limited speed, walking round the ball in an arc
   // (no jump to the other side), and keep the ball at the foot.
   if (p.trapAim) turnTowards(p, p.trapAim, cfg.trapTurnRate * DT);
+  // Pass power: how long the stick has been held since the player faces the pass direction.
+  if (!dir) p.passHold = 0;
+  else if (p.fx * dir.x + p.fy * dir.y > 0.97) p.passHold += DT;
   const tx = ball.x - p.fx * cfg.footReach;
   const ty = ball.y - p.fy * cfg.footReach;
   // Step there at most at a brisk walk, so the player never jumps.
@@ -311,7 +316,7 @@ function stepTrap(p, joy, dir, world) {
     } else if (dir) {
       p.fx = dir.x;
       p.fy = dir.y;
-      kick(p, ball, dir, tuning.kick.passSpeed, 0, p.passing, world, 'pass');
+      kick(p, ball, dir, passSpeed(p.passHold), 0, p.passing, world, 'pass');
     } else {
       if (p.trapAim) { p.fx = p.trapAim.x; p.fy = p.trapAim.y; }
       p.touchTimer = 0.25;
@@ -429,6 +434,7 @@ function startSlide(p, dir, world) {
   p.stateTimer = cfg.slideTime;
   p.slideTouched = false;
   p.slideFouled = false;
+  p.slideLeg = world.step % 2 ? 1 : -1; // which leg is stretched out (drawing only)
   world.events.push({ type: 'slide' });
 }
 
@@ -501,6 +507,55 @@ function kick(p, ball, d, speed, lift, skill, world, kind) {
   launchBall(p, ball, dx * speed, dy * speed, lift, world, kind, true);
 }
 
+// Is the facing direction roughly towards the opponent's goal (within 40 m)? Otherwise a
+// driven kick is a long ball, not a shot.
+function aimedAtGoal(p, ball, world) {
+  const team = world.teams && world.teams[p.team];
+  if (!team) return true;
+  const dir = team.attackDir;
+  const gy = dir < 0 ? 0 : PITCH.length;
+  const dy = gy - ball.y;
+  if (Math.abs(dy) > 40 || p.fy * dy <= 0) return false;
+  const x = ball.x + (p.fx / p.fy) * dy; // where the line crosses the goal line
+  return Math.abs(x - PITCH.width / 2) < PITCH.goalWidth / 2 + 6;
+}
+
+// Pass power 0..1 from the time the stick was held (see tuning.kick.passPowerDelay/Time).
+export function passPower(hold) {
+  const k = tuning.kick;
+  return Math.min(1, Math.max(0, (hold - k.passPowerDelay) / k.passPowerTime));
+}
+
+export function passSpeed(hold) {
+  const k = tuning.kick;
+  return k.passSpeed + passPower(hold) * (k.passMaxSpeed - k.passSpeed);
+}
+
+// Stick hold time that gives a pass of speed v (0 for the normal quick pass).
+export function holdForSpeed(v) {
+  const k = tuning.kick;
+  if (v <= k.passSpeed) return 0;
+  const t = Math.min(1, (v - k.passSpeed) / (k.passMaxSpeed - k.passSpeed));
+  return k.passPowerDelay + t * k.passPowerTime + 0.01;
+}
+
+// Ground distance a ball rolls while slowing from v0 to v1 on the current pitch
+// (deceleration = rollFriction + rollDrag · v, as in ball.js).
+export function rollDistance(v0, v1) {
+  const { rollFriction: a, rollDrag: k } = currentSurface();
+  return (v0 - v1) / k - (a / (k * k)) * Math.log((a + k * v0) / (a + k * v1));
+}
+
+// Start speed for a ground pass that arrives `dist` metres away with speed `arrive`.
+export function speedForDistance(dist, arrive) {
+  let lo = arrive, hi = 60;
+  for (let i = 0; i < 30; i++) {
+    const mid = (lo + hi) / 2;
+    if (rollDistance(mid, arrive) < dist) lo = mid; else hi = mid;
+  }
+  return hi;
+}
+
 // Give the ball a velocity as a touch of player p (kicks, throw-ins, corners).
 // With `withAftertouch` the player can bend it for a short time afterwards.
 export function launchBall(p, ball, vx, vy, vz, world, kind, withAftertouch) {
@@ -510,6 +565,7 @@ export function launchBall(p, ball, vx, vy, vz, world, kind, withAftertouch) {
   ball.spin = 0;
   ball.heldBy = null;
   touched(p, ball, world);
+  ball.kicked = kind;
   const speed = Math.hypot(vx, vy) || 1;
   p.aftertouch = withAftertouch
     ? { time: tuning.kick.aftertouchTime, dx: vx / speed, dy: vy / speed, seq: ball.touchSeq, kind }
@@ -602,6 +658,7 @@ function footPoint(p) {
 function touched(p, ball, world) {
   ball.touchSeq++;
   ball.lastTouch = p;
+  ball.kicked = null; // a dribble touch; launchBall sets the kind of a kick
   ball.touchStep = world.step;
 }
 

@@ -14,13 +14,104 @@ const SURFACE_LOOK = {
 const STRIPES = 18;
 const BOARD_DEPTH = 1.2; // advertising boards around the pitch (drawn depth in metres)
 
-export function drawPitch(ctx, view) {
-  const look = SURFACE_LOOK[tuning.game.pitchType] || SURFACE_LOOK.normal;
-  const { W, H } = view;
-  const m = PITCH.margin;
+const BACKGROUND = '#1d2a22';
 
-  ctx.fillStyle = '#1d2a22';
-  ctx.fillRect(0, 0, W, H);
+// --- Cached pitch layer ---------------------------------------------------------------------
+// Everything on the ground that never moves (grass, lines, goal shadows, boards, corner flags)
+// is drawn once into tiles of TILE × TILE device pixels. A frame only copies the visible tiles.
+// The tiles are rebuilt when the zoom, the pixel ratio, the pitch type or the grass pattern
+// changes. Tiles are built on demand (least recently used ones are reused).
+
+const TILE = 512;
+const EDGE = PITCH.margin + BOARD_DEPTH + 0.5;
+const LAYER = { x0: -EDGE, y0: -EDGE, x1: PITCH.width + EDGE, y1: PITCH.length + EDGE };
+const cache = { key: '', tiles: new Map(), pool: [], max: 0 };
+
+export function drawPitch(ctx, view) {
+  const dpr = view.dpr || 1;
+  const s = view.scale;
+  const key = `${s}|${dpr}|${tuning.game.grass}|${tuning.game.pitchType}`;
+  if (cache.key !== key) {
+    for (const c of cache.tiles.values()) cache.pool.push(c);
+    cache.tiles.clear();
+    cache.key = key;
+  }
+  const ppm = s * dpr; // device pixels per metre
+  const cols = Math.ceil(((LAYER.x1 - LAYER.x0) * ppm) / TILE);
+  const rows = Math.ceil(((LAYER.y1 - LAYER.y0) * ppm) / TILE);
+  // Screen position of the layer in device pixels, snapped to whole pixels (no seams).
+  const ox = Math.round(view.sx(LAYER.x0) * dpr);
+  const oy = Math.round(view.sy(LAYER.y0) * dpr);
+  const Wd = view.W * dpr, Hd = view.H * dpr;
+  const i0 = Math.floor(-ox / TILE), i1 = Math.floor((Wd - 1 - ox) / TILE);
+  const j0 = Math.floor(-oy / TILE), j1 = Math.floor((Hd - 1 - oy) / TILE);
+  // Room for the visible tiles and the ring around them, so no tile in use is thrown away.
+  cache.max = (i1 - i0 + 3) * (j1 - j0 + 3) + 4;
+  if (cache.pool.length > cache.max) cache.pool.length = cache.max;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (i0 < 0 || j0 < 0 || i1 >= cols || j1 >= rows) {
+    ctx.fillStyle = BACKGROUND; // the view is larger than the stadium
+    ctx.fillRect(0, 0, Wd, Hd);
+  }
+  for (let j = Math.max(0, j0); j <= Math.min(rows - 1, j1); j++) {
+    for (let i = Math.max(0, i0); i <= Math.min(cols - 1, i1); i++) {
+      ctx.drawImage(tile(i, j, view), ox + i * TILE, oy + j * TILE);
+    }
+  }
+  ctx.restore();
+
+  // Build one tile of the ring around the view per frame, so scrolling finds them ready.
+  for (let j = Math.max(0, j0 - 1); j <= Math.min(rows - 1, j1 + 1); j++) {
+    for (let i = Math.max(0, i0 - 1); i <= Math.min(cols - 1, i1 + 1); i++) {
+      if (!cache.tiles.has(i + ',' + j)) {
+        tile(i, j, view);
+        return;
+      }
+    }
+  }
+}
+
+function tile(i, j, view) {
+  const id = i + ',' + j;
+  let c = cache.tiles.get(id);
+  if (c) {
+    cache.tiles.delete(id); // move to the end: most recently used
+    cache.tiles.set(id, c);
+    return c;
+  }
+  if (cache.tiles.size >= cache.max) {
+    const [oldest, old] = cache.tiles.entries().next().value;
+    cache.tiles.delete(oldest);
+    cache.pool.push(old);
+  }
+  c = cache.pool.pop();
+  if (!c) {
+    c = document.createElement('canvas');
+    c.width = c.height = TILE;
+  }
+  const g = c.getContext('2d', { alpha: false });
+  const dpr = view.dpr || 1;
+  const s = view.scale;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.filter = 'none';
+  g.fillStyle = BACKGROUND;
+  g.fillRect(0, 0, TILE, TILE);
+  // Layer coordinates: CSS pixels from the layer's top-left corner.
+  g.setTransform(dpr, 0, 0, dpr, -i * TILE, -j * TILE);
+  drawPitchLayer(g, {
+    dpr, scale: s,
+    sx: (x) => (x - LAYER.x0) * s,
+    sy: (y) => (y - LAYER.y0) * s,
+  });
+  cache.tiles.set(id, c);
+  return c;
+}
+
+function drawPitchLayer(ctx, view) {
+  const look = SURFACE_LOOK[tuning.game.pitchType] || SURFACE_LOOK.normal;
+  const m = PITCH.margin;
 
   // Surround (grass outside the lines).
   rectW(ctx, view, -m, -m, PITCH.width + 2 * m, PITCH.length + 2 * m, look.surround);
@@ -153,7 +244,13 @@ function drawCornerFlag(ctx, view, x, y) {
 
 const MESH = 0.35; // size of the net's squares (m)
 
+const goalCache = new Map();
 function goalGeometry(top) {
+  if (!goalCache.has(top)) goalCache.set(top, buildGoalGeometry(top));
+  return goalCache.get(top);
+}
+
+function buildGoalGeometry(top) {
   const lineY = top ? 0 : PITCH.length;
   const back = top ? -PITCH.goalDepth : PITCH.length + PITCH.goalDepth;
   const x0 = PITCH.width / 2 - PITCH.goalWidth / 2;

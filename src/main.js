@@ -21,6 +21,7 @@ const ctx = canvas.getContext('2d', { alpha: false });
 const input = createInput(window);
 const world = createWorld();
 const panel = createDevPanel(() => {
+  needsRender = true;
   applyOptions(world);
   audio.applyVolumes();
 }, { hidden: true });
@@ -42,6 +43,7 @@ let paused = false;
 let showDebug = false;
 let fullTimeMenuTimer = 0;
 let helpTimer = 0;
+let needsRender = true; // while paused, draw only after something changed
 let practice = null; // null (a match), 'skill' or 'penalties'
 
 const menus = createMenus(menuEl, {
@@ -69,6 +71,7 @@ const menus = createMenus(menuEl, {
   resultText,
   practice: () => practice,
   onChange() {
+    needsRender = true;
     applyOptions(world);
     audio.applyVolumes();
     panel.refresh();
@@ -106,11 +109,16 @@ function newMatch() {
 
 function setPaused(p) {
   paused = p;
+  needsRender = true;
   audio.setPaused(p);
 }
 
 // Keys for the running match only (not while a menu is open).
-const inMatch = (fn) => () => { if (started && !menus.isOpen()) fn(); };
+const inMatch = (fn) => () => {
+  if (!started || menus.isOpen()) return;
+  fn();
+  needsRender = true;
+};
 
 // Dev commands are queued and applied at the start of the next simulation step.
 const commands = [];
@@ -119,7 +127,7 @@ const commands = [];
 const hud = { banner: '', bannerTime: 0, action: '', actionTime: 0 };
 
 const ACTION_LABELS = {
-  shot: 'Shot', pass: 'Pass', lob: 'Lob', header: 'Header', overhead: 'Overhead kick',
+  shot: 'Shot', pass: 'Pass', longball: 'Long ball', lob: 'Lob', header: 'Header', overhead: 'Overhead kick',
   flick: 'Flick', post: 'Post!', bar: 'Crossbar!', save: 'Save!', catch: 'Caught',
   throwin: 'Throw-in', corner: 'Corner', goalkick: 'Goal kick', cross: 'Cross', clearance: 'Clearance',
   tackle: 'Tackle', freekick: 'Free kick', penalty: 'Penalty!', shootout: 'Penalty shoot-out',
@@ -246,6 +254,7 @@ function resize() {
   canvas.height = Math.round(H * dpr);
   canvas.style.width = `${W}px`;
   canvas.style.height = `${H}px`;
+  needsRender = true;
 }
 window.addEventListener('resize', resize);
 resize();
@@ -255,7 +264,13 @@ let last = performance.now();
 let acc = 0;
 let fps = 60;
 
+// With the 60 fps limit, frames of faster screens (120 Hz) are skipped: every frame closer than
+// FRAME_MIN ms to the last processed one. The simulation catches up in the next frame.
+const FRAME_MIN = 1000 / 60 - 3;
+
 function frame(now) {
+  requestAnimationFrame(frame);
+  if (tuning.game.frameRate === 60 && now - last < FRAME_MIN) return;
   const realDt = Math.min(0.25, (now - last) / 1000);
   last = now;
   fps += (1 / Math.max(realDt, 1e-3) - fps) * 0.05;
@@ -277,8 +292,11 @@ function frame(now) {
   if (!replay.active) alpha = paused ? 1 : acc / DT;
   if (started && !paused && !replay.active) audio.update(world, realDt);
   if (helpTimer > 0 && started && !paused) helpTimer -= realDt;
-  render(alpha, realDt);
-  requestAnimationFrame(frame);
+  // Nothing to draw behind the title screen and the main menu; while paused only after a change.
+  if (started && (!paused || needsRender || replay.active)) {
+    render(alpha, realDt);
+    needsRender = false;
+  }
 }
 
 const lerp = (a, b, t) => a + (b - a) * t;

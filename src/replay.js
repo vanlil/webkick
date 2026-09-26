@@ -3,7 +3,7 @@
 // the replay runs; afterwards the real state is put back exactly.
 
 const BODY_FIELDS = ['x', 'y', 'z', 'fx', 'fy', 'vx', 'vy', 'state', 'runPhase', 'kickTimer',
-  'diveDir', 'gettingUp', 'sentOff'];
+  'diveDir', 'gettingUp', 'sentOff', 'passHold', 'slideLeg'];
 const BALL_FIELDS = ['x', 'y', 'z', 'vx', 'vy', 'roll'];
 
 export function createReplay(steps = 400) {

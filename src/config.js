@@ -90,6 +90,7 @@ export const DEFAULTS = {
     control: 'nearest',   // 'nearest' (auto switch) or 'fixed' (one player all match)
     fixedPlayer: 10,      // index of the fixed player (1 … 10)
     radar: 1,             // 0 off, 1 small, 2 large
+    frameRate: 60,        // 60 = at most 60 frames per second, 0 = as fast as the screen
     grass: 'diamonds',    // mowing pattern: 'diamonds', 'stripes', 'squares', 'plain'
   },
   team: {
@@ -116,11 +117,11 @@ export const DEFAULTS = {
     boardRestitution: 0.3,
   },
   player: {
-    maxSpeed: 8.05,       // top running speed (pace 1.0); 15 % above the first version's 7.0
-    accel: 44,            // how fast the player reaches top speed
+    maxSpeed: 9,          // top running speed (pace 1.0)
+    accel: 50,            // how fast the player reaches top speed
     decel: 34.5,          // how fast the player stops when the stick is released
     footReach: 0.42,      // distance of the "foot point" in front of the body centre
-    touchRadius: 0.65,    // ball within this distance of the foot point = touch
+    touchRadius: 0.75,    // ball within this distance of the foot point = touch
     bodyRadius: 0.3,      // keep bodyRadius + ball radius < footReach, or a trapped ball touches the body
     dribbleFactor: 1.55,  // ball speed after a touch = player speed × this
     minPush: 2.2,         // minimum ball speed after a touch
@@ -132,7 +133,7 @@ export const DEFAULTS = {
     slideRecover: 0.45,   // time to get up after a slide
     fallTime: 1.2,        // a fouled player lies on the ground this long
     touchMaxHeight: 0.8,  // ball above this is not playable with the feet
-    controlRadius: 0.75,  // a ball coming this close to the body is controlled …
+    controlRadius: 0.85,  // a ball coming this close to the body is controlled …
     controlHeight: 1.9,   // … up to this height (shoulder / head) …
     controlMaxSpeed: 20,  // … unless it is faster than this: then it deflects
     blockDamping: 0.25,   // ball speed kept when it bounces off a player's body
@@ -143,7 +144,10 @@ export const DEFAULTS = {
     shotSpeed: 24,        // base shot speed (shooting skill 1.0)
     shotLift: 2.6,        // vertical speed of a shot: low drive
     runBonus: 0.3,        // share of the player's speed added to a shot
-    passSpeed: 14,
+    passSpeed: 14,        // pass with a quick release
+    passMaxSpeed: 24,     // pass with the stick held long (about 45 m on a normal pitch)
+    passPowerDelay: 0.3,  // stick held this long (facing the pass direction) before power builds up
+    passPowerTime: 0.6,   // then this long from passSpeed to passMaxSpeed
     lobSpeed: 13,
     lobLift: 9,
     lobMinSpeed: 2,       // player must run at least this fast to lob
@@ -198,7 +202,7 @@ export const DEFAULTS = {
   },
   ai: {
     passMinDist: 7,
-    passMaxDist: 24,
+    passMaxDist: 42,
     pressureDist: 7,      // an opponent this close = under pressure → look for a pass
     laneWidth: 1.8,       // an opponent this close to the pass line blocks it
     switchMargin: 0.8,    // human control switches when another player is this much closer to the ball

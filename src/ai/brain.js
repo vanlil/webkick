@@ -1,7 +1,7 @@
 import { DT, PITCH, tuning, currentSurface } from '../config.js';
 import { tacticTarget, toWorld, toNorm } from './tactics.js';
 import { oppGoal, ownGoal } from '../world/team.js';
-import { fromBehind, fatigue } from '../world/player.js';
+import { fromBehind, fatigue, holdForSpeed, speedForDistance } from '../world/player.js';
 
 // The AI drives outfield players through the same virtual joystick as the human
 // (8 directions + fire), so CPU players follow exactly the same ball rules.
@@ -14,13 +14,16 @@ const GOAL_X1 = PITCH.width / 2 + PITCH.goalWidth / 2;
 export function teamJoysticks(team, world, skip, out) {
   const lvl = team.level;
   const ball = perceivedBall(world, lvl.reaction);
-  const attacking = world.possession === team.id;
+  // A keeper holds the ball: nobody goes for it. His team-mates spread out to receive the
+  // throw or kick; the other team drops back into its defensive shape.
+  const keeperBall = world.ball.heldBy;
+  const attacking = keeperBall ? keeperBall.team === team.id : world.possession === team.id;
   const outfield = team.players.filter((p) => p.role !== 'keeper' && p !== skip && !p.sentOff);
 
   let chaser = null;
   let presser = null;
   const m = world.match;
-  const open = !m || m.phase === 'play' || (m.phase === 'start' && m.startTeam === team.id);
+  const open = !keeperBall && (!m || m.phase === 'play' || (m.phase === 'start' && m.startTeam === team.id));
   // The human's team: in fixed-player mode the AI team-mates play fully (chaser, presser);
   // in nearest mode one only goes for the ball if he is clearly quicker there than the human.
   const fixed = team.human && world.human && world.human.fixed != null;
@@ -102,6 +105,12 @@ function intercept(p, b) {
 // The player who reaches the ball first goes for it; keep the current one unless another is
 // clearly quicker, so the chaser does not flicker.
 function pickChaser(team, outfield, ball) {
+  // A dribbler keeps the ball, even when it runs ahead closer to a team-mate.
+  const owner = ball.lastTouch;
+  if (owner && owner.team === team.id && outfield.includes(owner) && hasBall(owner, ball)) {
+    team.chaser = owner;
+    return owner;
+  }
   let best = null, bestT = Infinity, currentT = Infinity;
   for (const p of outfield) {
     const t = intercept(p, ball).t;
@@ -259,7 +268,10 @@ function trySlide(p, team, world, ball) {
 
 function hasBall(p, ball) {
   if (p.state === 'trap') return true;
-  return ball.lastTouch === p && !ball.heldBy && ball.z < 0.6 && Math.hypot(ball.x - p.x, ball.y - p.y) < 3;
+  // Dribbling: the last touch was his and not a kick (pass, shot). At full speed the ball runs
+  // a few metres ahead.
+  return ball.lastTouch === p && !ball.kicked && !ball.heldBy && ball.z < 0.6 &&
+    Math.hypot(ball.x - p.x, ball.y - p.y) < 4.5;
 }
 
 function withBall(p, team, world) {
@@ -279,8 +291,8 @@ function withBall(p, team, world) {
 
   ai.decisionTimer -= DT;
   if (ai.planTimer > 0) ai.planTimer -= DT;
-  const busy = ai.turning || (ai.plan === 'pass' && ai.passPhase !== 'approach') ||
-    ((ai.plan === 'shoot' || ai.plan === 'chip') && ai.planTimer > 0);
+  const busy = ai.turning || ai.plan === 'pass' ||
+    ((ai.plan === 'shoot' || ai.plan === 'chip' || ai.plan === 'longball') && ai.planTimer > 0);
   if (!busy && (!ai.plan || ai.decisionTimer <= 0)) {
     decide(p, team, world);
     ai.decisionTimer = lvl.decision;
@@ -302,6 +314,16 @@ function withBall(p, team, world) {
 
   if (ai.plan === 'chip') return executeChip(p, ball, ai);
 
+  if (ai.plan === 'longball') {
+    // A driven kick straight from the dribble (fire just after a touch), like a human's long ball.
+    const joy = drive(p, ball, ai.dir);
+    if (p.shotWindow > 0 && p.fx * ai.dir.x + p.fy * ai.dir.y > 0.99) {
+      joy.fire = true;
+      ai.plan = null;
+    }
+    return joy;
+  }
+
   if (ai.plan === 'shoot') {
     const joy = drive(p, ball, ai.dir);
     // Fire just after the touch, when the push went in the shooting direction.
@@ -315,6 +337,10 @@ function withBall(p, team, world) {
   }
   return drive(p, ball, ai.dir);
 }
+
+// Passes longer than this (m) are played as a long ball (driven kick from the dribble); shorter
+// ones from a trapped ball, with the stick held longer for longer passes.
+const LONG_BALL = 30;
 
 function decide(p, team, world) {
   const ai = p.ai;
@@ -392,11 +418,20 @@ function decide(p, team, world) {
         return;
       }
     }
+    if (pass && pass.dist > LONG_BALL) {
+      ai.plan = 'longball';
+      ai.dir = pass;
+      ai.planTimer = 1.5;
+      return;
+    }
     if (pass) {
       ai.plan = 'pass';
       ai.dir = pass;
       ai.passPhase = 'approach';
-      ai.passTimer = 1.3;
+      // Longer passes: hold the stick longer, like a human (the ball arrives at a speed the
+      // receiver can control, a little faster for long balls).
+      ai.holdNeeded = holdForSpeed(speedForDistance(pass.dist, 4 + pass.dist * 0.08));
+      ai.passTimer = 1.3 + ai.holdNeeded;
       return;
     }
   }
@@ -512,12 +547,16 @@ function bestPass(p, team, world, g, opponents, maxDist = tuning.ai.passMaxDist)
     const dir = toSectorDir(Math.atan2(vy, vx));
     const along = vx * dir.x + vy * dir.y;
     const miss = Math.abs(vx * dir.y - vy * dir.x); // how far the mate is from the pass line
-    if (along <= 0 || miss > 3.5) continue;
-    if (blocked(ball, dir, along, opponents, cfg.laneWidth)) continue;
+    // Long balls take longer: the receiver has time to run to the line, but opponents also
+    // have time to step into the lane.
+    if (along <= 0 || miss > 3.5 + d * 0.05) continue;
+    if (blocked(ball, dir, along, opponents, cfg.laneWidth + along * 0.03)) continue;
     let free = 10;
     for (const o of opponents) free = Math.min(free, Math.hypot(o.x - mx, o.y - my));
-    const score = progress * 0.6 + free * 0.8 - miss;
-    if (score > bestScore) { bestScore = score; best = dir; }
+    let score = progress * 0.6 + free * 0.8 - miss - Math.max(0, d - 25) * 0.08;
+    // Switch of play: a free team-mate far out on the other side.
+    if (Math.abs(vx) > 20 && free > 7) score += 1.5;
+    if (score > bestScore) { bestScore = score; best = { x: dir.x, y: dir.y, dist: along }; }
   }
   return best;
 }
@@ -585,7 +624,8 @@ function executeTrap(p, lvl, ball, mode) {
     ai.aimTimer -= DT;
     // Release only when the player has finished turning to the new direction.
     const aligned = p.fx * ai.dir.x + p.fy * ai.dir.y > 0.97;
-    if (ai.aimTimer <= 0 && aligned) ai.passPhase = 'release';
+    const held = mode === 'turn' || p.passHold >= (ai.holdNeeded || 0);
+    if (ai.aimTimer <= 0 && aligned && held) ai.passPhase = 'release';
     return { dx: ai.dir.x ? Math.sign(ai.dir.x) : 0, dy: ai.dir.y ? Math.sign(ai.dir.y) : 0, fire: true };
   }
   if (mode === 'turn') {

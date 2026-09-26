@@ -81,6 +81,7 @@ export function createAudio() {
       case 'lob':
       case 'overhead':
       case 'pass':
+      case 'longball':
       case 'cross':
       case 'clearance':
         if (allowed('kick')) synth.kick(ctx, here(), t, noise, (e.speed || 20) / 28);

@@ -107,6 +107,7 @@ export function createMenus(root, actions) {
           choice('After a draw', ['none', 'penalties', 'extra'], ['draw stands', 'penalties', 'extra time + penalties'], () => g.draw, (v) => { g.draw = v; }),
           choice('Sound', ['all', 'crowd', 'off'], ['on', 'crowd only', 'off'], () => tuning.audio.mode, (v) => { tuning.audio.mode = v; }),
           choice('Radar', [0, 1, 2], ['off', 'small', 'large'], () => g.radar, (v) => { g.radar = v; }),
+          choice('Frame rate', [60, 0], ['60 fps (less load)', 'screen maximum'], () => g.frameRate, (v) => { g.frameRate = v; }),
           { type: 'action', label: 'Back', run: back },
         ],
       };

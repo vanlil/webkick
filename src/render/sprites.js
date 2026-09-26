@@ -1,4 +1,5 @@
 import { tuning } from '../config.js';
+import { passPower } from '../world/player.js';
 
 // Players are drawn from straight above (bird's-eye view, as in the classic game), turned to
 // the running direction. The ball and the goals use a slight 3/4 view: height moves them up
@@ -42,10 +43,12 @@ export function drawPlayer(ctx, view, p, x, y, { active = false } = {}) {
     ctx.arc(cx, cy, R, 0, Math.PI * 2);
     ctx.stroke();
     // Direction cue: a small arrowhead on the ring where the player faces (where a shot goes).
+    // In trap mode it grows with the pass power (stick held longer = harder pass).
     if (!lying) {
       const a = Math.atan2(p.fy, p.fx);
-      const tip = R + 0.28 * s, base = R - 0.02 * s, half = 0.17 * s;
-      ctx.fillStyle = '#ffe14d';
+      const power = p.state === 'trap' ? passPower(p.passHold || 0) : 0;
+      const tip = R + (0.28 + power * 0.9) * s, base = R - 0.02 * s, half = (0.17 + power * 0.06) * s;
+      ctx.fillStyle = power > 0 ? `rgb(255,${Math.round(225 - power * 110)},77)` : '#ffe14d';
       ctx.beginPath();
       ctx.moveTo(cx + Math.cos(a) * tip, cy + Math.sin(a) * tip);
       ctx.lineTo(cx + Math.cos(a) * base - Math.sin(a) * half, cy + Math.sin(a) * base + Math.cos(a) * half);
@@ -134,15 +137,31 @@ function standingShapes(p) {
 // On the ground (sliding, fouled, getting up, diving keeper): full length, x = towards the head.
 function lyingShapes(p) {
   const diving = p.role === 'keeper';
+  const sliding = p.state === 'slide';
+  const straight = p.slideLeg || 1; // sliding: this leg is stretched out, the other one bent
   const shapes = [];
   for (const side of [-1, 1]) {
-    shapes.push({ part: 'socks', type: 'capsule', a: [-0.05, 0.1 * side], b: [-0.9, 0.16 * side], w: 0.13 });
-    shapes.push({ part: 'boots', type: 'ellipse', c: [-0.96, 0.17 * side], rx: 0.06, ry: 0.09 });
+    if (sliding && side !== straight) {
+      // Bent leg: the knee points out to the side, the foot tucked in next to the other knee.
+      const hip = [-0.05, 0.1 * side], knee = [-0.42, 0.3 * side], foot = [-0.62, 0.08 * side];
+      shapes.push({ part: 'socks', type: 'capsule', a: hip, b: knee, w: 0.14 });
+      shapes.push({ part: 'socks', type: 'capsule', a: knee, b: foot, w: 0.12 });
+      shapes.push({ part: 'boots', type: 'ellipse', c: [foot[0] - 0.04, foot[1]], rx: 0.09, ry: 0.06 });
+    } else if (sliding) {
+      // Straight leg, stretched towards the ball.
+      shapes.push({ part: 'socks', type: 'capsule', a: [-0.05, 0.1 * side], b: [-0.98, 0.06 * side], w: 0.13 });
+      shapes.push({ part: 'boots', type: 'ellipse', c: [-1.04, 0.06 * side], rx: 0.06, ry: 0.09 });
+    } else {
+      shapes.push({ part: 'socks', type: 'capsule', a: [-0.05, 0.1 * side], b: [-0.9, 0.16 * side], w: 0.13 });
+      shapes.push({ part: 'boots', type: 'ellipse', c: [-0.96, 0.17 * side], rx: 0.06, ry: 0.09 });
+    }
   }
   shapes.push({ part: 'shorts', type: 'ellipse', c: [-0.05, 0], rx: 0.17, ry: 0.19 });
-  // Arms: a diving keeper stretches them beyond his head; others spread them out.
+  // Arms: a diving keeper stretches them beyond his head; a sliding player props himself up
+  // with the hand on the bent-leg side; others spread them out.
   for (const side of [-1, 1]) {
-    const hand = diving ? [0.95, 0.13 * side] : [0.25, 0.45 * side];
+    const hand = diving ? [0.95, 0.13 * side]
+      : sliding && side !== straight ? [0.0, 0.42 * side] : [0.25, 0.45 * side];
     shapes.push({ part: 'shirt', type: 'capsule', a: [0.45, 0.2 * side], b: mid([0.45, 0.2 * side], hand), w: 0.12 });
     shapes.push({ part: diving ? 'gloves' : 'skin', type: 'capsule', a: mid([0.45, 0.2 * side], hand), b: hand, w: 0.1 });
   }
