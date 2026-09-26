@@ -22,6 +22,20 @@ dotnet serve -o                             # in the project folder; opens http:
 
 Use `-p <port>` for another port.
 
+### Optional: standalone build (no server)
+
+To get a version that opens straight from the disk (double-click `index.html`, `file://`),
+bundle and minify the sources into one script with [esbuild](https://esbuild.github.io):
+
+```sh
+node tools/build-dist.mjs   # needs Node.js; esbuild is fetched by npx on the first run
+```
+
+This writes `dist/` (about 145 KB of JavaScript, 50 KB gzipped). Development does not change:
+edit `src/` and use the server as above; run the build again after changes. `dist/` is not
+tracked by git. From `file://` the web manifest (install as an app) does not work; everything
+else does.
+
 ## Controls
 
 | Input | Action |

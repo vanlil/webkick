@@ -3,8 +3,48 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>webkick</title>
+  <title>webkick – fast top-down football game in your browser</title>
+  <meta name="description" content="webkick is a free, fast, skill-based top-down football (soccer) game that runs in the browser. The ball is never glued to your feet: dribble, pass, shoot, lob and bend the ball with aftertouch. No download, no sign-up.">
+  <meta name="author" content="Axel van Lil">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://vanlil.github.io/webkick/">
   <meta name="theme-color" content="#2f7a3c">
+
+  <!-- Link previews (social networks, chat apps) -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="webkick">
+  <meta property="og:title" content="webkick – fast top-down football in your browser">
+  <meta property="og:description" content="Free, skill-based top-down football. Dribble, pass, shoot and bend the ball – no download, no sign-up.">
+  <meta property="og:url" content="https://vanlil.github.io/webkick/">
+  <meta property="og:image" content="https://vanlil.github.io/webkick/docs/screenshots/title-menu.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="734">
+  <meta property="og:image:alt" content="webkick title screen with the main menu">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <!-- Structured data for search engines -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "VideoGame",
+    "name": "webkick",
+    "url": "https://vanlil.github.io/webkick/",
+    "description": "A free, fast, skill-based top-down football game for the browser. Single player against the computer, practice mode, set pieces, penalty shoot-outs and replays.",
+    "genre": ["Sports", "Football", "Soccer"],
+    "gamePlatform": "Web browser",
+    "applicationCategory": "Game",
+    "operatingSystem": "Any",
+    "playMode": "SinglePlayer",
+    "inLanguage": "en",
+    "image": "https://vanlil.github.io/webkick/docs/screenshots/match.jpg",
+    "author": { "@type": "Person", "name": "Axel van Lil" },
+    "license": "https://opensource.org/licenses/MIT",
+    "codeRepository": "https://github.com/vanlil/webkick",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" }
+  }
+  </script>
+
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -14,6 +54,14 @@
 <body>
   <canvas id="game"></canvas>
   <div id="title" role="dialog" aria-label="webkick title screen">
+    <!-- For search engines and screen readers; the logo is part of the title artwork. -->
+    <div class="sr-only">
+      <h1>webkick – top-down football in your browser</h1>
+      <p>A fast, skill-based football game. The ball runs free in front of your player: run
+        into it to dribble, press fire just after a touch to shoot, hold fire to trap and pass,
+        pull back to lob, and bend shots with aftertouch. Play single matches against the
+        computer on three skill levels, or practise shooting and penalties.</p>
+    </div>
     <p id="title-prompt">Loading…</p>
     <p id="title-help">Arrows: run · Space: fire · Esc: menu</p>
   </div>
@@ -24,7 +72,7 @@
       <p class="menu-hint"></p>
     </div>
   </div>
-  <noscript>webkick needs JavaScript.</noscript>
+  <noscript>webkick is a top-down football game that runs in the browser. Please enable JavaScript to play.</noscript>
   <script type="module" src="src/main.js"></script>
 </body>
 </html>
