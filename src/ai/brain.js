@@ -105,12 +105,6 @@ function intercept(p, b) {
 // The player who reaches the ball first goes for it; keep the current one unless another is
 // clearly quicker, so the chaser does not flicker.
 function pickChaser(team, outfield, ball) {
-  // A dribbler keeps the ball, even when it runs ahead closer to a team-mate.
-  const owner = ball.lastTouch;
-  if (owner && owner.team === team.id && outfield.includes(owner) && hasBall(owner, ball)) {
-    team.chaser = owner;
-    return owner;
-  }
   let best = null, bestT = Infinity, currentT = Infinity;
   for (const p of outfield) {
     const t = intercept(p, ball).t;
@@ -306,6 +300,16 @@ function withBall(p, team, world) {
   const bx = ball.x - p.x, by = ball.y - p.y;
   const bd = Math.hypot(bx, by);
   if (bd < 3 && bd > 0.01 && (bx * ai.dir.x + by * ai.dir.y) / bd < -0.2) {
+    // A rolling ball: turn on the move instead of stopping it. The next touch pushes it to the
+    // side (a quarter turn, towards the side the player is already on); then the normal
+    // dribble takes it on in the wanted direction.
+    const bs = Math.hypot(ball.vx, ball.vy);
+    if (bs > 1) {
+      const a = Math.atan2(ball.vy, ball.vx);
+      const s1 = toSectorDir(a + Math.PI / 2), s2 = toSectorDir(a - Math.PI / 2);
+      const pick = (bx * s1.x + by * s1.y) >= (bx * s2.x + by * s2.y) ? s1 : s2;
+      return drive(p, ball, pick);
+    }
     ai.turning = true;
     ai.passPhase = 'approach';
     ai.passTimer = 1.3;
@@ -422,6 +426,15 @@ function decide(p, team, world) {
       ai.plan = 'longball';
       ai.dir = pass;
       ai.planTimer = 1.5;
+      return;
+    }
+    // A rolling ball and a normal-length pass: play it on the move. The player gets round the
+    // ball and the next touch is the pass (at running speed a touch is as strong as a pass).
+    const moving = Math.hypot(ball.vx, ball.vy) > 2 && Math.hypot(p.vx, p.vy) > 5;
+    if (pass && moving && speedForDistance(pass.dist, 4 + pass.dist * 0.08) <= tuning.kick.passSpeed) {
+      ai.plan = 'dribble';
+      ai.dir = pass;
+      ai.planTimer = 0.8;
       return;
     }
     if (pass) {
