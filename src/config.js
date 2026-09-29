@@ -1,0 +1,295 @@
+// All tunable constants. Units: metres, seconds, m/s, m/s².
+// `tuning` is mutable (dev panel) and persisted in localStorage; DEFAULTS stays untouched.
+
+export const SIM_HZ = 50;
+export const DT = 1 / SIM_HZ;
+
+// Pitch geometry (fixed, real-world sizes). x across (0..width), y along (0 = top goal line).
+export const PITCH = {
+  width: 68,
+  length: 105,
+  margin: 7,            // grass/track outside the lines up to the boards
+  goalWidth: 8.5,        // wider than the real 7.32 m, like the classic game's goals
+  goalHeight: 2.44,
+  goalDepth: 2.0,
+  boxDepth: 16.5,
+  boxWidth: 40.32,
+  sixDepth: 5.5,
+  sixWidth: 18.32,
+  circleRadius: 9.15,
+  penaltySpot: 11,
+  cornerRadius: 1,
+  lineWidth: 0.12,
+};
+
+// Surface behaviour per pitch type.
+// rollFriction: constant deceleration of a rolling ball (m/s²)
+// rollDrag:     speed-proportional deceleration of a rolling ball (1/s)
+// restitution:  vertical bounce factor
+// bounceGrip:   horizontal speed kept on each bounce
+// airDragMul:   multiplier on air drag
+// bumpiness:    max random deflection on a bounce (radians)
+// staminaMul:   how fast players tire (used from M3 on)
+const PITCH_TYPES = {
+  normal:     { rollFriction: 1.6, rollDrag: 0.35, restitution: 0.55, bounceGrip: 0.85, airDragMul: 1.0, bumpiness: 0.0,  staminaMul: 1.0 },
+  wet:        { rollFriction: 1.0, rollDrag: 0.25, restitution: 0.45, bounceGrip: 0.95, airDragMul: 1.0, bumpiness: 0.0,  staminaMul: 1.1 },
+  soggy:      { rollFriction: 2.8, rollDrag: 0.60, restitution: 0.30, bounceGrip: 0.65, airDragMul: 1.0, bumpiness: 0.0,  staminaMul: 1.4 },
+  artificial: { rollFriction: 1.1, rollDrag: 0.25, restitution: 0.72, bounceGrip: 0.90, airDragMul: 1.0, bumpiness: 0.0,  staminaMul: 1.3 },
+  icy:        { rollFriction: 0.5, rollDrag: 0.12, restitution: 0.60, bounceGrip: 0.97, airDragMul: 1.0, bumpiness: 0.0,  staminaMul: 1.0 },
+  muddy:      { rollFriction: 4.5, rollDrag: 1.00, restitution: 0.22, bounceGrip: 0.50, airDragMul: 1.8, bumpiness: 0.0,  staminaMul: 2.0 },
+  bumpy:      { rollFriction: 1.8, rollDrag: 0.40, restitution: 0.55, bounceGrip: 0.85, airDragMul: 1.0, bumpiness: 0.45, staminaMul: 1.1 },
+};
+
+// CPU difficulty = how well the computer *plays* (its "brain"), independent of how good its
+// players are (TEAM_LEVELS). reaction: how old the ball information is that the AI acts on
+// (s); decision: time between decisions on the ball (s); aftertouch: chance to bend a shot;
+// chasers: players going for the ball (2 = one presses the carrier); slide: willingness to
+// make sliding tackles; tackleSense: how well it avoids tackles from behind (fouls).
+export const AI_LEVELS = {
+  easy:   { reaction: 0.40, decision: 0.45, shootRange: 17, aftertouch: 0.0, passAim: 0.25, chasers: 1, headers: false, keeperReaction: 0.32, slide: 0.4, tackleSense: 0.3, chip: 0.2 },
+  medium: { reaction: 0.22, decision: 0.28, shootRange: 22, aftertouch: 0.5, passAim: 0.15, chasers: 2, headers: true,  keeperReaction: 0.22, slide: 0.7, tackleSense: 0.6, chip: 0.5 },
+  hard:   { reaction: 0.10, decision: 0.15, shootRange: 27, aftertouch: 1.0, passAim: 0.08, chasers: 2, headers: true,  keeperReaction: 0.14, slide: 1.0, tackleSense: 0.85, chip: 0.9 },
+};
+
+// Team strength (the players' attributes), per team, as in the classic's divisions.
+export const TEAM_LEVELS = {
+  international: { skill: 0.95, pace: 1.02, keeperSkill: 0.90 },
+  first:         { skill: 0.85, pace: 1.00, keeperSkill: 0.80 },
+  second:        { skill: 0.77, pace: 0.97, keeperSkill: 0.72 },
+  third:         { skill: 0.68, pace: 0.94, keeperSkill: 0.63 },
+  fourth:        { skill: 0.60, pace: 0.90, keeperSkill: 0.55 },
+};
+export const TEAM_LEVEL_NAMES = { international: 'International', first: '1st division', second: '2nd division', third: '3rd division', fourth: '4th division' };
+
+// The brain of the human's own CPU-controlled team-mates and keeper.
+export const HUMAN_TEAM = { reaction: 0.2, keeperReaction: 0.22 };
+
+export const TACTIC_NAMES = ['4-4-2', '4-3-3', '4-2-4', '5-3-2'];
+
+// Real minutes per half. The clock always shows 2 × 45 minutes of game time.
+export const HALF_MINUTES = [3, 5, 10, 20];
+
+// Wind presets (m/s), airborne ball only.
+export const WIND_LEVELS = { none: 0, light: 2, medium: 4, strong: 6 };
+
+export const DEFAULTS = {
+  game: {
+    speed: 1.0,           // 1 = normal, 0.75 = reduced, 0.5 = slow
+    pitchType: 'normal',
+    wind: 'none',
+    windDirDeg: 90,       // direction the wind blows TO; 0 = up the screen, 90 = right
+    aftertouch: true,
+    difficulty: 'medium', // how well the CPU plays: easy / medium / hard
+    homeLevel: 'first',   // strength of your team (TEAM_LEVELS)
+    awayLevel: 'first',   // strength of the CPU team
+    humanTactic: '4-4-2',
+    cpuTactic: '4-4-2',
+    halfMinutes: 5,
+    referee: true,        // off = no fouls are given
+    draw: 'none',         // after a draw: 'none', 'penalties', 'extra' (extra time, then penalties)
+    control: 'nearest',   // 'nearest' (auto switch) or 'fixed' (one player all match)
+    fixedPlayer: 10,      // index of the fixed player (1 … 10)
+    radar: 1,             // 0 off, 1 small, 2 large
+    frameRate: 60,        // 60 = at most 60 frames per second, 0 = as fast as the screen
+    grass: 'diamonds',    // mowing pattern: 'diamonds', 'stripes', 'squares', 'plain'
+  },
+  team: {
+    home: 0,              // index into TEAMS (your team)
+    away: 1,              // the CPU's team
+    shirt: '',            // your kit; empty = the team's own colours
+    shorts: '',
+    stripes: '',          // stripe colour, empty = plain shirt
+  },
+  keys: {
+    up: 'ArrowUp',
+    down: 'ArrowDown',
+    left: 'ArrowLeft',
+    right: 'ArrowRight',
+    fire: 'Space',
+    fire2: 'ControlRight', // second fire key (some keyboards cannot register arrows + Space together)
+  },
+  ball: {
+    gravity: 9.81,
+    airDrag: 0.12,        // 1/s, applied to velocity relative to the wind
+    radius: 0.11,         // physical radius
+    drawRadius: 0.27,     // drawn larger than real, for readability
+    minBounceVz: 0.9,     // below this vertical speed the ball stops bouncing and rolls
+    boardRestitution: 0.3,
+  },
+  player: {
+    maxSpeed: 9,          // top running speed (pace 1.0)
+    accel: 50,            // how fast the player reaches top speed
+    decel: 34.5,          // how fast the player stops when the stick is released
+    footReach: 0.42,      // distance of the "foot point" in front of the body centre
+    touchRadius: 0.75,    // ball within this distance of the foot point = touch
+    bodyRadius: 0.3,      // keep bodyRadius + ball radius < footReach, or a trapped ball touches the body
+    dribbleFactor: 1.55,  // ball speed after a touch = player speed × this
+    minPush: 2.2,         // minimum ball speed after a touch
+    touchCooldown: 0.12,  // seconds between two touches
+    trapTurnRate: 12,     // turning speed with the ball trapped (rad/s; 180° ≈ 0.26 s)
+    slideSpeed: 9.8,      // minimum speed at the start of a sliding tackle
+    slideTime: 0.55,
+    slideFriction: 9,     // deceleration while sliding (m/s²)
+    slideRecover: 0.45,   // time to get up after a slide
+    fallTime: 1.2,        // a fouled player lies on the ground this long
+    touchMaxHeight: 0.8,  // ball above this is not playable with the feet
+    controlRadius: 0.85,  // a ball coming this close to the body is controlled …
+    controlHeight: 1.9,   // … up to this height (shoulder / head) …
+    controlMaxSpeed: 20,  // … unless it is faster than this: then it deflects
+    blockDamping: 0.25,   // ball speed kept when it bounces off a player's body
+  },
+  kick: {
+    shotWindow: 0.25,     // seconds after a dribble touch in which fire = shot
+    shotReach: 1.8,       // ball must still be this close to the foot to shoot
+    shotSpeed: 24,        // base shot speed (shooting skill 1.0)
+    shotLift: 2.6,        // vertical speed of a shot: low drive
+    runBonus: 0.3,        // share of the player's speed added to a shot
+    passSpeed: 14,        // pass with a quick release
+    passMaxSpeed: 24,     // pass with the stick held long (about 45 m on a normal pitch)
+    passPowerDelay: 0.3,  // stick held this long (facing the pass direction) before power builds up
+    passPowerTime: 0.6,   // then this long from passSpeed to passMaxSpeed
+    lobSpeed: 13,
+    lobLift: 9,
+    lobMinSpeed: 2,       // player must run at least this fast to lob
+    flickLift: 5.5,
+    maxError: 0.12,       // max direction error (radians) for skill 0
+    aftertouchTime: 0.45, // seconds after a kick in which the stick bends the ball
+    curveRate: 4,         // spin added per second of full sideways stick
+    spinMax: 1.2,         // max spin (rad/s of velocity rotation)
+    spinDecay: 0.5,       // how fast spin fades during the flight (1/s)
+    dipRate: 14,          // extra downward acceleration with the stick forward (m/s²)
+    headRange: 2.5,       // fire starts a jump if an airborne ball is this close
+    headReach: 0.7,
+    headerSpeed: 12,
+    headerLift: 1.2,
+    jumpTime: 0.5,
+    jumpHeight: 0.45,
+    overheadSpeed: 17,
+    overheadLift: 3.5,
+    overheadTime: 0.9,    // time on the ground after an overhead kick
+  },
+  keeper: {
+    speed: 6.9,
+    accel: 34.5,
+    reach: 0.7,           // catching reach when standing (m)
+    diveReach: 1.1,       // catching reach when diving
+    diveSpeed: 8.6,
+    diveTime: 0.45,
+    downTime: 0.9,        // time on the ground after a dive
+    catchHeight: 2.6,
+    holdTime: 1.0,        // seconds before the keeper throws or kicks the ball out
+    kickSpeed: 23,
+    kickLift: 11,
+  },
+  setpiece: {
+    deadTime: 0.35,       // ball out: seconds before it is placed for the restart
+    walkTimeout: 7,       // the taker walks (runs) to the ball; only after this is he placed there
+    humanAuto: 2.5,       // human throw-in / goal kick is taken automatically after this
+    cpuDelay: 0.6,        // the CPU takes its set pieces after this
+    throwMin: 5,          // throw-in speed without / with a full charge
+    throwMax: 17,
+    cornerMin: 6,         // corner distance at power 1 and 9 (m)
+    cornerMax: 50,
+    runupTime: 0.6,
+    halfTimePause: 3,
+  },
+  freekick: {
+    powerMin: 17,         // free kick power is random between these (m/s)
+    powerMax: 25,
+    wallDistance: 9.15,
+    penaltySpeed: 24,
+    pointerPeriod: 1.1,   // seconds for the penalty direction pointer to sweep across and back
+  },
+  ai: {
+    passMinDist: 7,
+    passMaxDist: 42,
+    pressureDist: 7,      // an opponent this close = under pressure → look for a pass
+    laneWidth: 1.8,       // an opponent this close to the pass line blocks it
+    switchMargin: 0.8,    // human control switches when another player is this much closer to the ball
+  },
+  goal: {
+    postRadius: 0.06,
+    postRestitution: 0.6,
+    netDamping: 0.15,     // speed kept when the ball hits the net
+    resetDelay: 2.5,      // seconds until the kick-off after a goal
+  },
+  audio: {
+    mode: 'all',          // 'all', 'crowd' (crowd only) or 'off'
+    master: 0.8,
+    effects: 0.8,
+    crowd: 0.6,
+  },
+  camera: {
+    viewHeight: 40,       // visible pitch height in metres (zoom)
+    lookAhead: 0.35,      // seconds of ball velocity to look ahead
+    smoothing: 5,         // higher = camera follows faster
+  },
+  render: {
+    zScale: 0.75,         // height → screen offset factor (3/4 view)
+    playerScale: 2.0,     // players drawn larger than real, for readability (visual only)
+  },
+  surfaces: PITCH_TYPES,
+};
+
+export const PITCH_TYPE_NAMES = Object.keys(PITCH_TYPES);
+
+export const tuning = structuredClone(DEFAULTS);
+
+// Only values that differ from the defaults are stored, so improved defaults in a new
+// version still reach players who never changed that value.
+const STORAGE_KEY = 'webkick.tuning.v2';
+const OLD_KEY = 'webkick.tuning.v1'; // stored every value; only the player's choices are kept
+const PLAYER_CHOICES = ['game', 'team', 'keys', 'audio'];
+
+export function loadTuning() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      mergeKnown(tuning, JSON.parse(raw), DEFAULTS);
+      return;
+    }
+    const old = localStorage.getItem(OLD_KEY);
+    if (old) {
+      const parsed = JSON.parse(old);
+      for (const group of PLAYER_CHOICES) mergeKnown(tuning[group], parsed[group], DEFAULTS[group]);
+      localStorage.removeItem(OLD_KEY);
+      saveTuning();
+    }
+  } catch { /* storage blocked or corrupt: keep defaults */ }
+}
+
+export function saveTuning() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(diff(tuning, DEFAULTS) || {})); } catch { /* ignore */ }
+}
+
+// The parts of `obj` that differ from `base` (nested), or undefined if nothing differs.
+function diff(obj, base) {
+  if (!obj || typeof obj !== 'object') return obj === base ? undefined : obj;
+  const out = {};
+  let any = false;
+  for (const k of Object.keys(obj)) {
+    const d = diff(obj[k], base ? base[k] : undefined);
+    if (d !== undefined) { out[k] = d; any = true; }
+  }
+  return any ? out : undefined;
+}
+
+export function resetTuning() {
+  mergeKnown(tuning, structuredClone(DEFAULTS), DEFAULTS);
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+}
+
+export function currentSurface() {
+  return tuning.surfaces[tuning.game.pitchType] || tuning.surfaces.normal;
+}
+
+// Copy values from `source` into `target`, but only keys that exist in `template` with the
+// same type. Nested objects are merged in place, so references held elsewhere stay valid.
+function mergeKnown(target, source, template) {
+  if (!source || typeof source !== 'object') return;
+  for (const k of Object.keys(template)) {
+    const t = template[k];
+    if (t && typeof t === 'object') mergeKnown(target[k], source[k], t);
+    else if (typeof source[k] === typeof t) target[k] = source[k];
+  }
+}
