@@ -428,10 +428,12 @@ function decide(p, team, world) {
       ai.planTimer = 1.5;
       return;
     }
-    // A rolling ball and a normal-length pass: play it on the move. The player gets round the
-    // ball and the next touch is the pass (at running speed a touch is as strong as a pass).
-    const moving = Math.hypot(ball.vx, ball.vy) > 2 && Math.hypot(p.vx, p.vy) > 5;
-    if (pass && moving && speedForDistance(pass.dist, 4 + pass.dist * 0.08) <= tuning.kick.passSpeed) {
+    // A rolling ball and a short pass: play it on the move. The player gets round the ball and
+    // the next touch is the pass (if a touch at his running speed is strong enough).
+    const run = Math.hypot(p.vx, p.vy);
+    const moving = Math.hypot(ball.vx, ball.vy) > 2 && run > 5;
+    const touchSpeed = run * tuning.player.dribbleFactor; // a dribble touch is the pass
+    if (pass && moving && speedForDistance(pass.dist, 4 + pass.dist * 0.08) <= touchSpeed) {
       ai.plan = 'dribble';
       ai.dir = pass;
       ai.planTimer = 0.8;
@@ -563,7 +565,7 @@ function bestPass(p, team, world, g, opponents, maxDist = tuning.ai.passMaxDist)
     // Long balls take longer: the receiver has time to run to the line, but opponents also
     // have time to step into the lane.
     if (along <= 0 || miss > 3.5 + d * 0.05) continue;
-    if (blocked(ball, dir, along, opponents, cfg.laneWidth + along * 0.03)) continue;
+    if (blocked(ball, dir, along, opponents, cfg.laneWidth, speedForDistance(d, 4 + d * 0.08))) continue;
     let free = 10;
     for (const o of opponents) free = Math.min(free, Math.hypot(o.x - mx, o.y - my));
     let score = progress * 0.6 + free * 0.8 - miss - Math.max(0, d - 25) * 0.08;
@@ -716,15 +718,19 @@ function finishJoy(p, joy) {
   return out;
 }
 
-function blocked(ball, d, length, opponents, width) {
+// Is an opponent in the lane of a ball played in direction d? With `ballSpeed`, the lane widens
+// by how far an opponent can run (with some reaction time) until the ball passes him.
+function blocked(ball, d, length, opponents, width, ballSpeed = 0) {
   for (const o of opponents) {
     const rx = o.x - ball.x, ry = o.y - ball.y;
     const along = rx * d.x + ry * d.y;
     if (along < 0.5 || along > length) continue;
-    if (Math.abs(rx * d.y - ry * d.x) < width) return true;
+    const reach = ballSpeed ? tuning.player.maxSpeed * (o.pace || 1) * (along / ballSpeed) * LANE_REACH : 0;
+    if (Math.abs(rx * d.y - ry * d.x) < width + reach) return true;
   }
   return false;
 }
+const LANE_REACH = 0.2; // share of that run that counts (reaction time, not a straight line)
 
 function sectorStick(s) {
   const a = s * SECTOR;

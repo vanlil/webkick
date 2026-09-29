@@ -112,22 +112,22 @@ export const DEFAULTS = {
     gravity: 9.81,
     airDrag: 0.12,        // 1/s, applied to velocity relative to the wind
     radius: 0.11,         // physical radius
-    drawRadius: 0.27,     // drawn larger than real, for readability
+    drawRadius: 0.2,      // drawn larger than real, for readability
     minBounceVz: 0.9,     // below this vertical speed the ball stops bouncing and rolls
     boardRestitution: 0.3,
   },
   player: {
-    maxSpeed: 9,          // top running speed (pace 1.0)
-    accel: 50,            // how fast the player reaches top speed
-    decel: 34.5,          // how fast the player stops when the stick is released
+    maxSpeed: 12,         // top running speed (pace 1.0); fast, as in the classic game
+    accel: 65,            // how fast the player reaches top speed
+    decel: 45,            // how fast the player stops when the stick is released
     footReach: 0.42,      // distance of the "foot point" in front of the body centre
     touchRadius: 0.75,    // ball within this distance of the foot point = touch
     bodyRadius: 0.3,      // keep bodyRadius + ball radius < footReach, or a trapped ball touches the body
-    dribbleFactor: 1.55,  // ball speed after a touch = player speed × this
+    dribbleFactor: 1.2,   // ball speed after a touch = player speed × this (1.2: stays 1–1.5 m ahead)
     minPush: 2.2,         // minimum ball speed after a touch
     touchCooldown: 0.12,  // seconds between two touches
     trapTurnRate: 12,     // turning speed with the ball trapped (rad/s; 180° ≈ 0.26 s)
-    slideSpeed: 9.8,      // minimum speed at the start of a sliding tackle
+    slideSpeed: 12.5,     // minimum speed at the start of a sliding tackle
     slideTime: 0.55,
     slideFriction: 9,     // deceleration while sliding (m/s²)
     slideRecover: 0.45,   // time to get up after a slide
@@ -135,7 +135,7 @@ export const DEFAULTS = {
     touchMaxHeight: 0.8,  // ball above this is not playable with the feet
     controlRadius: 0.85,  // a ball coming this close to the body is controlled …
     controlHeight: 1.9,   // … up to this height (shoulder / head) …
-    controlMaxSpeed: 20,  // … unless it is faster than this: then it deflects
+    controlMaxSpeed: 22,  // … unless it is faster than this: then it deflects
     blockDamping: 0.25,   // ball speed kept when it bounces off a player's body
   },
   kick: {
@@ -144,11 +144,11 @@ export const DEFAULTS = {
     shotSpeed: 24,        // base shot speed (shooting skill 1.0)
     shotLift: 2.6,        // vertical speed of a shot: low drive
     runBonus: 0.3,        // share of the player's speed added to a shot
-    passSpeed: 14,        // pass with a quick release
-    passMaxSpeed: 24,     // pass with the stick held long (about 45 m on a normal pitch)
+    passSpeed: 16,        // pass with a quick release
+    passMaxSpeed: 26,     // pass with the stick held long
     passPowerDelay: 0.3,  // stick held this long (facing the pass direction) before power builds up
     passPowerTime: 0.6,   // then this long from passSpeed to passMaxSpeed
-    lobSpeed: 13,
+    lobSpeed: 15,
     lobLift: 9,
     lobMinSpeed: 2,       // player must run at least this fast to lob
     flickLift: 5.5,
@@ -169,11 +169,11 @@ export const DEFAULTS = {
     overheadTime: 0.9,    // time on the ground after an overhead kick
   },
   keeper: {
-    speed: 6.9,
-    accel: 34.5,
+    speed: 9,
+    accel: 45,
     reach: 0.7,           // catching reach when standing (m)
     diveReach: 1.1,       // catching reach when diving
-    diveSpeed: 8.6,
+    diveSpeed: 9.5,
     diveTime: 0.45,
     downTime: 0.9,        // time on the ground after a dive
     catchHeight: 2.6,
@@ -203,7 +203,7 @@ export const DEFAULTS = {
   ai: {
     passMinDist: 7,
     passMaxDist: 42,
-    pressureDist: 7,      // an opponent this close = under pressure → look for a pass
+    pressureDist: 9,      // an opponent this close = under pressure → look for a pass
     laneWidth: 1.8,       // an opponent this close to the pass line blocks it
     switchMargin: 0.8,    // human control switches when another player is this much closer to the ball
   },
@@ -220,13 +220,13 @@ export const DEFAULTS = {
     crowd: 0.6,
   },
   camera: {
-    viewHeight: 40,       // visible pitch height in metres (zoom)
-    lookAhead: 0.35,      // seconds of ball velocity to look ahead
-    smoothing: 5,         // higher = camera follows faster
+    viewHeight: 24,       // visible pitch height in metres (zoom); close, as in the classic game
+    lookAhead: 0.25,      // seconds of ball velocity to look ahead
+    smoothing: 8,         // higher = camera follows faster
   },
   render: {
     zScale: 0.75,         // height → screen offset factor (3/4 view)
-    playerScale: 2.0,     // players drawn larger than real, for readability (visual only)
+    playerScale: 1.3,     // players drawn a bit larger than real, for readability (visual only)
   },
   surfaces: PITCH_TYPES,
 };

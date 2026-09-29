@@ -25,6 +25,7 @@ export function createMenus(root, actions) {
   let stack = [];
   let index = 0;
   let capturing = null; // key binding being remapped
+  const pointer = { x: -1, y: -1 }; // last mouse position seen over the menu
 
   const changed = () => {
     saveTuning();
@@ -174,7 +175,14 @@ export function createMenus(root, actions) {
       const value = valueElement(it);
       if (value) li.appendChild(value);
       if (it.type !== 'info') {
-        li.addEventListener('mouseenter', () => { index = i; highlight(); });
+        // Only a real mouse movement selects: after a re-render the new item under a resting
+        // pointer gets 'mouseenter' too, which would steal the keyboard selection.
+        li.addEventListener('mousemove', (e) => {
+          if (e.clientX === pointer.x && e.clientY === pointer.y) return;
+          pointer.x = e.clientX;
+          pointer.y = e.clientY;
+          if (index !== i) { index = i; highlight(); }
+        });
         li.addEventListener('click', (e) => {
           index = i;
           const dir = e.target.dataset && e.target.dataset.dir;
