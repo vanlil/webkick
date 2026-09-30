@@ -1,7 +1,10 @@
 import { DT, PITCH, tuning, currentSurface } from '../config.js';
-import { tacticTarget, toWorld, toNorm } from './tactics.js';
 import { oppGoal, ownGoal } from '../world/team.js';
 import { fromBehind, fatigue, holdForSpeed, speedForDistance } from '../world/player.js';
+import {
+  PASS_DIRS, zoneValue, depthOf, passChance, carryChance, reachTime, updateTeamState, lossWeight,
+  planSupport, planMarking, homeSpot, coverSpot, pressTrigger,
+} from './teamplay.js';
 
 // The AI drives outfield players through the same virtual joystick as the human
 // (8 directions + fire), so CPU players follow exactly the same ball rules.
@@ -19,16 +22,26 @@ export function teamJoysticks(team, world, skip, out) {
   const keeperBall = world.ball.heldBy;
   const attacking = keeperBall ? keeperBall.team === team.id : world.possession === team.id;
   const outfield = team.players.filter((p) => p.role !== 'keeper' && p !== skip && !p.sentOff);
+  const st = updateTeamState(team, world);
 
   let chaser = null;
   let presser = null;
+  let presserHunts = false;
   const m = world.match;
   const open = !keeperBall && (!m || m.phase === 'play' || (m.phase === 'start' && m.startTeam === team.id));
   // The human's team: in fixed-player mode the AI team-mates play fully (chaser, presser);
   // in nearest mode one only goes for the ball if he is clearly quicker there than the human.
   const fixed = team.human && world.human && world.human.fixed != null;
-  if (open && outfield.length && (!team.human || fixed)) {
-    chaser = pickChaser(team, outfield, ball);
+  // The dribbler keeps the ball even when it runs ahead of him closer to a team-mate, unless
+  // his last touch was a pass on the move (then the receiver goes for it).
+  const owner = world.ball.lastTouch;
+  const ownerKeeps = owner && owner.team === team.id && outfield.includes(owner) && hasBall(owner, world.ball) &&
+    !passReleased(owner, world.ball);
+  // The human has the ball (fixed-player mode): no team-mate goes for it; they offer themselves.
+  const humanHasBall = team.human && skip && hasBall(skip, world.ball);
+  if (open && outfield.length && (!team.human || fixed) && !humanHasBall) {
+    chaser = ownerKeeps ? owner : pickChaser(team, outfield, ball);
+    if (ownerKeeps) team.chaser = owner;
   } else if (open && outfield.length && skip) {
     const c = pickChaser(team, outfield, ball);
     if (intercept(c, ball).t < intercept(skip, ball).t - 0.3) chaser = c;
@@ -41,7 +54,25 @@ export function teamJoysticks(team, world, skip, out) {
         const d = Math.hypot(p.x - ball.x, p.y - ball.y);
         if (d < best) { best = d; presser = p; }
       }
+      // The second man hunts the ball right after losing it (counter-press) or on a press
+      // trigger; otherwise he blocks the most dangerous pass lane (cover shadow).
+      const oppCarrier = world.ball.lastTouch && world.ball.lastTouch.team !== team.id ? world.ball.lastTouch : null;
+      presserHunts = (st.phase === 'counterpress' && lvl.counterPress) || (lvl.pressTriggers && pressTrigger(world, oppCarrier));
     }
+  }
+
+  // Team play in open play: support and runs around our ball carrier (an AI player or the
+  // human), marking near our goal when defending.
+  if (open) {
+    const carrier = team.players.find((p) => !p.sentOff && p.role !== 'keeper' && hasBall(p, world.ball));
+    const free = outfield.filter((p) => p !== chaser && p !== presser);
+    if (attacking && carrier) planSupport(team, world, carrier, free, lvl, st);
+    else if (!attacking) { st.support.clear(); st.runs.clear(); }
+    st.markTimer = (st.markTimer || 0) - DT;
+    if (!attacking && st.markTimer <= 0) { planMarking(team, world, free, st, lvl); st.markTimer = 0.4; }
+    if (attacking) st.marks.clear();
+  } else {
+    st.support.clear(); st.runs.clear(); st.marks.clear();
   }
 
   for (const p of outfield) {
@@ -55,7 +86,10 @@ export function teamJoysticks(team, world, skip, out) {
     else {
       p.ai.plan = null; // not on the ball: forget any plan
       p.ai.turning = false;
-      joy = p === presser ? press(p, team, ball) : position(p, team, ball, attacking, world);
+      const role = open && (st.support.get(p) || st.runs.get(p) || st.marks.get(p));
+      if (p === presser) joy = presserHunts ? huntBall(p, ball) : press(p, team, world, ball);
+      else if (role) joy = steer(p, role.x, role.y, st.runs.has(p) ? 0 : 0.8);
+      else joy = position(p, team, ball, attacking, world, st);
     }
     out.set(p, finishJoy(p, joy));
   }
@@ -123,6 +157,22 @@ function pickChaser(team, outfield, ball) {
 const CORNER_ATTACK = [[3, 5], [-3, 6], [0, 11], [8, 12], [-8, 13], [0, 18]];
 const CORNER_DEFEND = [[3.5, 1.5], [-3.5, 1.5], [0, 5], [6, 8], [-6, 8], [0, 12], [10, 14], [-10, 14]];
 
+// Own throw-in: the nearest team-mate offers himself forward along the line, the second one
+// square, further infield.
+function throwSpot(p, team, sp) {
+  const mates = team.players.filter((q) => q.role !== 'keeper' && !q.sentOff && q !== sp.taker)
+    .sort((a, b) => Math.hypot(a.x - sp.x, a.y - sp.y) - Math.hypot(b.x - sp.x, b.y - sp.y));
+  const i = mates.indexOf(p);
+  if (i < 0 || i > 1) return null;
+  const infield = sp.x < PITCH.width / 2 ? 1 : -1;
+  const fwd = team.attackDir; // +1: attacks towards y = length
+  // Forward, but not into the corner: at least 12 m from the opponent's goal line.
+  const toLine = fwd > 0 ? PITCH.length - sp.y : sp.y;
+  const ahead = Math.max(-4, Math.min(9, toLine - 12));
+  const spot = i === 0 ? { x: sp.x + infield * 5, y: sp.y + fwd * ahead } : { x: sp.x + infield * 10, y: sp.y + fwd * Math.min(2, ahead) };
+  return { x: Math.min(PITCH.width - 2, Math.max(2, spot.x)), y: Math.min(PITCH.length - 3, Math.max(3, spot.y)) };
+}
+
 function cornerSpot(p, team, sp) {
   const attacking = sp.team === team.id;
   const spots = attacking ? CORNER_ATTACK : CORNER_DEFEND;
@@ -140,11 +190,15 @@ function cornerSpot(p, team, sp) {
   return { x: PITCH.width / 2 + dx * near, y: goalY + into * dist };
 }
 
-function position(p, team, ball, attacking, world) {
+function position(p, team, ball, attacking, world, st) {
   const sp = world.match && world.match.setPiece;
   if (sp && sp.type === 'corner' && sp.stage !== 'dead') {
     const spot = cornerSpot(p, team, sp);
     if (spot) return steer(p, spot.x, spot.y, 0.6);
+  }
+  if (sp && sp.type === 'throwin' && sp.stage !== 'dead' && sp.team === team.id && p !== sp.taker) {
+    const spot = throwSpot(p, team, sp);
+    if (spot) return steer(p, spot.x, spot.y, 0.5);
   }
   if (sp && sp.type === 'freekick' && sp.stage !== 'dead') {
     const wi = sp.wall ? sp.wall.indexOf(p) : -1;
@@ -152,10 +206,7 @@ function position(p, team, ball, attacking, world) {
     const hi = sp.helpers ? sp.helpers.indexOf(p) : -1;
     if (hi >= 0) return steer(p, sp.helperSpots[hi].x, sp.helperSpots[hi].y, 0.3);
   }
-  const slot = p.index - 1;
-  const n = toNorm(team.attackDir, ball.x, ball.y);
-  const [tx, ty] = tacticTarget(team.tactic, slot, n.x, n.y, attacking);
-  const w = toWorld(team.attackDir, tx, ty);
+  const w = homeSpot(p, team, ball, attacking, sp ? null : st);
   // Penalty: everybody except taker and keeper outside the box and the arc.
   if (sp && sp.type === 'penalty' && sp.stage !== 'dead') {
     const goalY = sp.y < PITCH.length / 2 ? 0 : PITCH.length;
@@ -183,12 +234,22 @@ function position(p, team, ball, attacking, world) {
   return steer(p, w.x, w.y, 1.0);
 }
 
-// Second defender: stand between the ball and the own goal, a few metres from the ball.
-function press(p, team, ball) {
+// Second defender: block the most dangerous pass lane (cover shadow), or else stand between
+// the ball and the own goal, a few metres from the ball.
+function press(p, team, world, ball) {
+  const carrier = world.ball.lastTouch && world.ball.lastTouch.team !== team.id ? world.ball.lastTouch : null;
+  const cover = carrier && coverSpot(team, world, carrier);
+  if (cover) return steer(p, cover.x, cover.y, 0.6);
   const g = ownGoal(team);
   const dx = g.x - ball.x, dy = g.y - ball.y;
   const d = Math.hypot(dx, dy) || 1;
   return steer(p, ball.x + (dx / d) * 4, ball.y + (dy / d) * 4, 0.8);
+}
+
+// Go straight for the ball (the second presser on a trigger).
+function huntBall(p, ball) {
+  const t = intercept(p, ball);
+  return steer(p, t.x, t.y, 0);
 }
 
 function chase(p, team, world, ball) {
@@ -198,6 +259,7 @@ function chase(p, team, world, ball) {
   if (hasBall(p, real)) return withBall(p, team, world);
   p.ai.plan = null;
   p.ai.turning = false;
+  p.ai.carryTime = 0;
 
   // Header towards the goal.
   if (lvl.headers && p.state === 'run' && real.z > 1.2 && real.vz < 0 && real.z < 3 &&
@@ -227,6 +289,26 @@ function chase(p, team, world, ball) {
     p.ai.carefulFor = null;
   }
 
+  // An opponent has the ball at his feet: contain him. Stand goal-side at a short distance and
+  // go in only when the ball comes free (a touch too far), when it is nearer to us than to him,
+  // or after waiting too long. A defender who runs straight into the carrier gets dribbled or
+  // fouls; this gives the attack time and the game its rhythm.
+  if (q && q.team !== team.id && !real.heldBy && !real.kicked && real.z < 0.5 &&
+      Math.hypot(q.x - real.x, q.y - real.y) < 2.4 && q.role !== 'keeper') {
+    const dBall = Math.hypot(real.x - p.x, real.y - p.y), dThem = Math.hypot(real.x - q.x, real.y - q.y);
+    if (p.ai.containFor !== q) { p.ai.containFor = q; p.ai.containTime = 0; }
+    p.ai.containTime += DT;
+    const eager = dBall < dThem - 0.25 || p.ai.containTime > (lvl.containTime ?? 1.6) || q.state === 'trap' && p.ai.containTime > 0.8;
+    if (!eager) {
+      const og = ownGoal(team);
+      const gx = og.x - q.x, gy = og.y - q.y, gd = Math.hypot(gx, gy) || 1;
+      const stand = lvl.containDist ?? 2.2;
+      return steer(p, q.x + (gx / gd) * stand, q.y + (gy / gd) * stand, 0.35);
+    }
+  } else {
+    p.ai.containFor = null;
+  }
+
   const target = intercept(p, ball);
   // Arrive on the goal side of the ball's path, so the touch pushes it towards the goal.
   const g = oppGoal(team);
@@ -236,7 +318,19 @@ function chase(p, team, world, ball) {
     tx -= ((g.x - target.x) / gd) * 0.35;
     ty -= ((g.y - target.y) / gd) * 0.35;
   }
-  return steer(p, tx, ty, 0);
+  const joy = steer(p, tx, ty, 0);
+  // Receiving a ball that comes at him: hold fire before the contact, so the first touch stops
+  // it (a trap) instead of knocking it back the way it came.
+  // Only when facing his own half: facing forward, he takes the ball on in his stride.
+  const rx = p.x - real.x, ry = p.y - real.y, rd = Math.hypot(rx, ry);
+  const bs = Math.hypot(real.vx, real.vy);
+  const og = ownGoal(team);
+  const facingBack = (p.fx * (og.x - p.x) + p.fy * (og.y - p.y)) / (Math.hypot(og.x - p.x, og.y - p.y) || 1) > 0.2;
+  // Also when a touch in his facing direction would push the ball out of play (e.g. receiving
+  // a throw-in while facing the touchline).
+  const facingOut = !inside(p.x + p.fx * 9, p.y + p.fy * 9, 0);
+  if ((facingBack || facingOut) && rd < 3.5 && bs > 3 && real.z < 1 && (real.vx * rx + real.vy * ry) / (rd * bs || 1) > 0.5 && p.shotWindow <= 0) joy.fire = true;
+  return joy;
 }
 
 // Sliding tackle on an opponent who has the ball at his feet. Willingness depends on the
@@ -258,6 +352,17 @@ function trySlide(p, team, world, ball) {
   if (world.rng.next() > lvl.slide * willing * 0.9 * DT) return null;
   const st = toSector(Math.atan2(dy, dx));
   return { dx: st.dx, dy: st.dy, fire: true };
+}
+
+// A pass played on the move: the planned pass direction and the ball runs that way, faster
+// than the passer.
+function passReleased(p, ball) {
+  const d = p.ai.dir;
+  if (!p.ai.passTo || !d) return false;
+  const bs = Math.hypot(ball.vx, ball.vy);
+  const released = bs > Math.hypot(p.vx, p.vy) + 1 && (ball.vx * d.x + ball.vy * d.y) / (bs || 1) > 0.9;
+  if (released) p.ai.passTo = null;
+  return released;
 }
 
 function hasBall(p, ball) {
@@ -285,21 +390,33 @@ function withBall(p, team, world) {
 
   ai.decisionTimer -= DT;
   if (ai.planTimer > 0) ai.planTimer -= DT;
+  ai.carryTime = (ai.carryTime || 0) + DT;
   const busy = ai.turning || ai.plan === 'pass' ||
-    ((ai.plan === 'shoot' || ai.plan === 'chip' || ai.plan === 'longball') && ai.planTimer > 0);
-  if (!busy && (!ai.plan || ai.decisionTimer <= 0)) {
+    ((ai.plan === 'shoot' || ai.plan === 'chip' || ai.plan === 'longball' || ai.plan === 'clear' || ai.plan === 'cross' || ai.plan === 'lofted') && ai.planTimer > 0);
+  // Danger at the own box: decide at once (no waiting for the next decision).
+  const urgent = ai.plan !== 'clear' && ownBoxPressure(team, world);
+  if (urgent) { ai.turning = false; }
+  if (urgent || (!busy && (!ai.plan || ai.decisionTimer <= 0))) {
     decide(p, team, world);
     ai.decisionTimer = lvl.decision;
   }
 
   if (ai.plan === 'pass') return executeTrap(p, lvl, ball, 'pass');
+  if (p.state === 'trap' && !ai.turning && ai.dir && !['longball', 'shoot', 'chip', 'clear', 'cross', 'lofted'].includes(ai.plan)) {
+    ai.turning = true;
+    ai.passPhase = 'aim';
+    ai.aimTimer = 0;
+    ai.passTimer = 1.0;
+  }
   if (ai.turning) return executeTrap(p, lvl, ball, 'turn');
 
   // Ball behind the player (seen from the wanted direction): turn with a trap first.
   // A ball to the side is played round instead (drive), which keeps the game flowing.
   const bx = ball.x - p.x, by = ball.y - p.y;
   const bd = Math.hypot(bx, by);
-  if (bd < 3 && bd > 0.01 && (bx * ai.dir.x + by * ai.dir.y) / bd < -0.2) {
+  if (ai.turnCooldown > 0) ai.turnCooldown -= DT;
+  // (Not again right after a turn: the ball is then still at his feet, a little behind him.)
+  if (bd < 3 && bd > 0.7 && !(ai.turnCooldown > 0) && (bx * ai.dir.x + by * ai.dir.y) / bd < -0.2) {
     // A rolling ball: turn on the move instead of stopping it. The next touch pushes it to the
     // side (a quarter turn, towards the side the player is already on); then the normal
     // dribble takes it on in the wanted direction.
@@ -316,7 +433,7 @@ function withBall(p, team, world) {
     return executeTrap(p, lvl, ball, 'turn');
   }
 
-  if (ai.plan === 'chip') return executeChip(p, ball, ai);
+  if (ai.plan === 'chip' || ai.plan === 'clear' || ai.plan === 'cross' || ai.plan === 'lofted') return executeChip(p, ball, ai, team, world);
 
   if (ai.plan === 'longball') {
     // A driven kick straight from the dribble (fire just after a touch), like a human's long ball.
@@ -341,10 +458,6 @@ function withBall(p, team, world) {
   }
   return drive(p, ball, ai.dir);
 }
-
-// Passes longer than this (m) are played as a long ball (driven kick from the dribble); shorter
-// ones from a trapped ball, with the stick held longer for longer passes.
-const LONG_BALL = 30;
 
 function decide(p, team, world) {
   const ai = p.ai;
@@ -397,70 +510,388 @@ function decide(p, team, world) {
     return;
   }
 
-  let nearest = Infinity;
-  for (const o of opponents) nearest = Math.min(nearest, Math.hypot(o.x - p.x, o.y - p.y));
-  const pressured = nearest < tuning.ai.pressureDist;
-  if ((pressured || rng.next() < 0.08) && rng.next() > p.flair * 0.6) {
-    // One-touch pass: a team-mate 6–15 m away in a direction the ball already runs in: the next
-    // touch in that direction plays it to him (no trap needed).
-    const quick = bestPass(p, team, world, g, opponents, 15);
-    const bx = ball.x - p.x, by = ball.y - p.y, bd = Math.hypot(bx, by) || 1;
-    if (quick && (bx * quick.x + by * quick.y) / bd > 0.55) {
-      ai.plan = 'dribble';
-      ai.dir = quick;
-      ai.planTimer = 0.6;
-      return;
-    }
-    const pass = bestPass(p, team, world, g, opponents);
-    // No ground pass: chip it over the defender in the lane, to a free team-mate.
-    if (!pass && rng.next() < lvl.chip) {
-      const chip = bestChip(p, team, world, g, opponents);
-      if (chip && canChip(chip)) {
-        ai.plan = 'chip';
-        ai.dir = chip;
-        ai.planTimer = 1.5;
-        return;
-      }
-    }
-    if (pass && pass.dist > LONG_BALL) {
-      ai.plan = 'longball';
-      ai.dir = pass;
+  // Shot, pass or carry: each option gets a value (how dangerous the ball is afterwards, times
+  // the chance to keep it, minus the risk of losing it). The team's phase sets the risk.
+  const st = team.play;
+  const shot = dGoal < lvl.shootRange ? bestShot(ball, g, opponents, lvl) : null;
+  const shotValue = shot ? shotQuality(team, ball) : -Infinity;
+  const tempo = TEMPO[st.phase] || TEMPO.progress;
+  const pass = choosePass(p, team, world, st, lvl, tempo.minP);
+  const carry = chooseCarry(p, team, world, st, lvl);
+  const passValue = pass ? pass.value : -Infinity;
+  const carryValue = carry ? carry.value : -Infinity;
+
+  if (shot && (shotValue >= Math.max(passValue, carryValue) * 0.85 || dGoal < 13)) {
+    ai.plan = 'shoot';
+    ai.dir = shot.dir;
+    ai.targetX = shot.targetX;
+    ai.planTimer = 2;
+    return;
+  }
+  // No good ground pass and not much room: chip it over the defender in the lane.
+  if (passValue < 0 && carryValue < 0 && rng.next() < lvl.chip) {
+    const chip = bestChip(p, team, world, g, opponents);
+    if (chip && canChip(chip)) {
+      ai.plan = 'chip';
+      ai.dir = chip;
       ai.planTimer = 1.5;
       return;
     }
-    // A rolling ball and a short pass: play it on the move. The player gets round the ball and
-    // the next touch is the pass (if a touch at his running speed is strong enough).
-    const run = Math.hypot(p.vx, p.vy);
-    const moving = Math.hypot(ball.vx, ball.vy) > 2 && run > 5;
-    const touchSpeed = run * tuning.player.dribbleFactor; // a dribble touch is the pass
-    if (pass && moving && speedForDistance(pass.dist, 4 + pass.dist * 0.08) <= touchSpeed) {
-      ai.plan = 'dribble';
-      ai.dir = pass;
-      ai.planTimer = 0.8;
-      return;
-    }
-    if (pass) {
-      ai.plan = 'pass';
-      ai.dir = pass;
-      ai.passPhase = 'approach';
-      // Longer passes: hold the stick longer, like a human (the ball arrives at a speed the
-      // receiver can control, a little faster for long balls).
-      ai.holdNeeded = holdForSpeed(speedForDistance(pass.dist, 4 + pass.dist * 0.08));
-      ai.passTimer = 1.3 + ai.holdNeeded;
-      return;
-    }
+  }
+  // Clearance: under pressure in or near the own box, with no safe pass: long, high and wide.
+  const pressed = contained(p, team, world) || pressureTime(world, team, ball) < 0.7;
+  const boxPressure = ownBoxPressure(team, world);
+  const goodPass = pass && pass.safe && pass.safe.p > 0.8 && (depthOf(team, from2(ball, pass.safe).y) <= depthOf(team, ball.y) + 0.02);
+  if (boxPressure && !goodPass) {
+    // Under pressure at the own box: high and wide (a one-touch run-up if he stands on it).
+    const d = clearDir(team, ball, opponents);
+    if (d) { setLob(ai, 'clear', d, true); return; }
+  }
+  // Cross: wide in the final third, team-mates in the box: a high ball into the box instead of
+  // dribbling to the byline.
+  const cross = crossDir(p, team, world, g);
+  if (cross && (pressed || Math.abs(g.y - ball.y) < 20 || ai.carryTime > 0.6) && rng.next() < (lvl.cross ?? 0.85)) {
+    setLob(ai, 'cross', cross.dir, cross.power);
+    return;
   }
 
+  // Rhythm: a contained carrier, or one who has had the ball for the phase's tempo, releases it
+  // with the best pass that is safe enough for the phase.
+  let pick = null;
+  if (pass && pass.safe && (contained(p, team, world) || ai.carryTime > tempo.carry)) pick = pass.safe;
+  // Otherwise keep carrying unless the pass is clearly better (no dithering between the two).
+  const keepCarrying = ai.plan === 'dribble' && carry && ai.dir && carry.dir.x === ai.dir.x && carry.dir.y === ai.dir.y;
+  if (!pick && pass && passValue > carryValue + (keepCarrying ? 0.006 : 0.002)) pick = pass;
+  if (pick) {
+    const pass = pick;
+    ai.dir = { x: pass.dir.x, y: pass.dir.y, dist: pass.along };
+    pass.to.ai.lastPasser = p;
+    pass.to.ai.lastPassStep = world.step;
+    ai.passTo = pass.to;
+    if (pass.kind === 'lob') {
+      setLob(ai, 'lofted', { x: pass.dir.x, y: pass.dir.y }, pass.power);
+    } else if (pass.kind === 'long') {
+      ai.plan = 'longball';
+      ai.planTimer = 1.5;
+    } else if (pass.kind === 'push') {
+      ai.plan = 'dribble'; // the next touch, on the move, is the pass
+      ai.planTimer = 0.8;
+    } else {
+      ai.plan = 'pass';
+      ai.passPhase = 'approach';
+      ai.holdNeeded = holdForSpeed(pass.speed);
+      ai.passTimer = 1.3 + ai.holdNeeded;
+    }
+    return;
+  }
   ai.plan = 'dribble';
-  // Close to goal without a shooting line: turn the dribble towards the goal to set up a shot.
-  if (dGoal < lvl.shootRange * 1.3) {
-    const d = toSectorDir(Math.atan2(g.y - ball.y, g.x - ball.x));
-    if (!blocked(ball, d, 5, opponents, 1.2)) {
-      ai.dir = d;
-      return;
+  ai.passTo = null;
+  ai.dir = carry ? carry.dir : bestDribble(p, ball, g, opponents, ai.dir);
+}
+
+// Carrying: extra value for running towards the opponent's goal (per unit of direction).
+const DRIVE = 0.03;
+
+// Extra value per metre a pass goes forward, per phase.
+const FORWARD = { buildup: 0.0009, progress: 0.0016, attack: 0.001, counter: 0.002, block: 0.001, counterpress: 0.001 };
+
+function inside(x, y, margin) {
+  return x > margin && x < PITCH.width - margin && y > margin && y < PITCH.length - margin;
+}
+
+function overOwnLine(team, y) {
+  const og = ownGoal(team);
+  return og.y === 0 ? y < 0 : y > PITCH.length;
+}
+
+// How much further a pass rolls after `along` metres if nobody touches it.
+function rollDistanceLeft(speed, along) {
+  const s = currentSurface();
+  const a = s.rollFriction, k = s.rollDrag;
+  const total = ((speed + a / k) * (1 - (a / k) / (speed + a / k))) / k - (a / k) * (Math.log((speed + a / k) / (a / k)) / k);
+  return Math.max(0, total - along);
+}
+
+// The ball is in or near the own box and an opponent is close (within 6 m, or there in 1.2 s).
+function ownBoxPressure(team, world) {
+  const ball = world.ball;
+  const og = ownGoal(team);
+  const into = og.y === 0 ? 1 : -1;
+  if (Math.abs(ball.x - PITCH.width / 2) > PITCH.boxWidth / 2 + 5 || (ball.y - og.y) * into > PITCH.boxDepth + 6) return false;
+  for (const o of world.teams[1 - team.id].players) {
+    if (!o.sentOff && o.role !== 'keeper' && Math.hypot(o.x - ball.x, o.y - ball.y) < 6) return true;
+  }
+  return pressureTime(world, team, ball) < 1.2;
+}
+
+// Where a pass ends (for the depth check).
+function from2(ball, pass) {
+  return { x: ball.x + pass.dir.x * pass.along, y: ball.y + pass.dir.y * pass.along };
+}
+
+function setLob(ai, plan, dir, power) {
+  ai.plan = plan;
+  ai.dir = dir;
+  ai.chipPower = power;
+  ai.passTo = null;
+  ai.planTimer = 2.0;
+}
+
+// Seconds until the nearest opponent can reach the ball.
+function pressureTime(world, team, ball) {
+  let t = Infinity;
+  for (const o of world.teams[1 - team.id].players) if (!o.sentOff) t = Math.min(t, reachTime(o, ball.x, ball.y, 0.2));
+  return t;
+}
+
+// Clearance direction: forward or diagonally forward, as wide as possible while the ball still
+// lands inside the pitch (about 34 m away), away from opponents.
+function clearDir(team, ball, opponents) {
+  const fy = team.attackDir;
+  let best = null, bestScore = -Infinity;
+  for (const d of [{ x: 0, y: fy }, { x: Math.SQRT1_2, y: fy * Math.SQRT1_2 }, { x: -Math.SQRT1_2, y: fy * Math.SQRT1_2 }]) {
+    const lx = ball.x + d.x * 34, ly = ball.y + d.y * 34;
+    // The ball rolls on after landing: land well inside the touchline, or it is a throw-in.
+    if (!inside(lx, ly, 8)) continue;
+    let free = 20;
+    for (const o of opponents) free = Math.min(free, Math.hypot(o.x - lx, o.y - ly));
+    const score = Math.abs(lx - PITCH.width / 2) * 0.35 + free * 0.4;
+    if (score > bestScore) { bestScore = score; best = d; }
+  }
+  return best;
+}
+
+// Cross from the wing: a high ball along an 8-way direction towards the box, if team-mates are
+// there. Longer crosses are played with more power.
+function crossDir(p, team, world, g) {
+  const ball = world.ball;
+  const dLine = Math.abs(g.y - ball.y);
+  // Only from a run with the ball (a lob needs a run-up).
+  if (p.state === 'trap' || Math.hypot(p.vx, p.vy) < 4) return null;
+  if (Math.abs(ball.x - PITCH.width / 2) < 15 || dLine > 32 || dLine < 3) return null;
+  const into = g.y === 0 ? 1 : -1;
+  const inBox = team.players.filter((m) => m !== p && !m.sentOff && m.role !== 'keeper' &&
+    Math.abs(m.x - PITCH.width / 2) < PITCH.boxWidth / 2 + 2 && (m.y - g.y) * into < PITCH.boxDepth + 3);
+  if (!inBox.length) return null;
+  // Aim at the team-mate in the box with most room, or the penalty spot.
+  const opp = world.teams[1 - team.id].players;
+  let target = { x: PITCH.width / 2, y: g.y + into * PITCH.penaltySpot }, bestFree = 0;
+  for (const m of inBox) {
+    let free = 10;
+    for (const o of opp) free = Math.min(free, Math.hypot(o.x - m.x, o.y - m.y));
+    if (free > bestFree) { bestFree = free; target = { x: m.x, y: m.y }; }
+  }
+  // Only directions close to his run (a lob goes where he runs): usually diagonally inwards.
+  const sp = Math.hypot(p.vx, p.vy);
+  const run = sp > 2 ? { x: p.vx / sp, y: p.vy / sp } : { x: ball.vx, y: ball.vy };
+  let best = null, bestErr = Infinity;
+  for (const dir of PASS_DIRS) {
+    if (dir.x * run.x + dir.y * run.y < 0.7 * Math.hypot(run.x, run.y)) continue;
+    // The point on this line nearest to the target: is it in the box, near the target?
+    const vx = target.x - ball.x, vy = target.y - ball.y;
+    const along = vx * dir.x + vy * dir.y;
+    if (along < 12 || along > 40) continue;
+    const lx = ball.x + dir.x * along, ly = ball.y + dir.y * along;
+    const inBoxArea = Math.abs(lx - PITCH.width / 2) < PITCH.boxWidth / 2 + 3 && (ly - g.y) * into > 1 && (ly - g.y) * into < PITCH.boxDepth + 4;
+    const err = Math.hypot(lx - target.x, ly - target.y);
+    if (inBoxArea && err < bestErr) { bestErr = err; best = { dir, power: along > 27 }; }
+  }
+  return best;
+}
+
+// Tempo per phase: how long a player carries the ball before looking to pass (s), and the
+// lowest pass chance accepted then.
+const TEMPO = {
+  buildup: { carry: 1.2, minP: 0.62 },
+  progress: { carry: 1.8, minP: 0.52 },
+  attack: { carry: 1.4, minP: 0.42 },
+  counter: { carry: 2.6, minP: 0.5 },
+};
+
+// A defender stands in front of the carrier (between him and the goal), close.
+function contained(p, team, world) {
+  const g = oppGoal(team);
+  const gx = g.x - p.x, gy = g.y - p.y, gd = Math.hypot(gx, gy) || 1;
+  for (const o of world.teams[1 - team.id].players) {
+    if (o.sentOff || o.role === 'keeper') continue;
+    const dx = o.x - p.x, dy = o.y - p.y, d = Math.hypot(dx, dy);
+    if (d < 3.2 && (dx * gx + dy * gy) / (d * gd || 1) > 0.3) return true;
+  }
+  return false;
+}
+
+// Rough quality of a shot from the ball's position (like an expected-goals value).
+function shotQuality(team, ball) {
+  const g = oppGoal(team);
+  const d = Math.hypot(g.x - ball.x, g.y - ball.y);
+  const angle = Math.abs(Math.atan2(ball.x - g.x, Math.abs(g.y - ball.y)));
+  return 0.7 * Math.exp(-d / 11) * Math.max(0.15, Math.cos(angle));
+}
+
+// The best pass: to a team-mate's feet or into the space ahead of a runner, along one of the
+// 8 stick directions, played on the move (a touch), from a trapped ball (held longer for more
+// power) or as a driven long ball.
+function choosePass(p, team, world, st, lvl, minP = 0) {
+  const ball = world.ball;
+  const from = { x: ball.x, y: ball.y };
+  const opp = world.teams[1 - team.id];
+  const lw = lossWeight(st);
+  const run = Math.hypot(p.vx, p.vy);
+  const bs = Math.hypot(ball.vx, ball.vy);
+  const moving = bs > 2 && run > 5 && p.state !== 'trap';
+  const k = tuning.kick;
+  let tPress = Infinity;
+  for (const o of opp.players) if (!o.sentOff) tPress = Math.min(tPress, reachTime(o, ball.x, ball.y, 0.2));
+  const underPressure = tPress < 0.8 || contained(p, team, world);
+  const human = world.human && world.human.team === team.id ? world.human.player : null;
+  let best = null, safe = null;
+  for (const m of team.players) {
+    if (m === p || m.sentOff || m.role === 'keeper') continue;
+    if (world.rng.next() > (lvl.vision ?? 0.8)) continue; // not seen this time
+    const mx = m.x + m.vx * 0.35, my = m.y + m.vy * 0.35;
+    const targets = [{ x: mx, y: my }];
+    const runTo = st && st.runs.get(m);
+    if (runTo) {
+      // A pass into the run: points along the runner's way (he gets there in time or not).
+      const rx = runTo.x - m.x, ry = runTo.y - m.y, rd = Math.hypot(rx, ry) || 1;
+      for (const k of [4, 8, 12]) if (k < rd + 3) targets.push({ x: m.x + (rx / rd) * k, y: m.y + (ry / rd) * k, run: true });
+    } else if (Math.hypot(m.vx, m.vy) > 5) targets.push({ x: mx + m.vx * 0.6, y: my + m.vy * 0.6 });
+    for (const t of targets) {
+      const vx = t.x - from.x, vy = t.y - from.y, d = Math.hypot(vx, vy);
+      if (d < 6 || d > 46) continue;
+      const dir = PASS_DIRS[((Math.round(Math.atan2(vy, vx) / SECTOR) % 8) + 8) % 8];
+      const along = vx * dir.x + vy * dir.y;
+      const miss = Math.abs(vx * dir.y - vy * dir.x);
+      if (along < 5 || miss > 3 + d * 0.06) continue;
+      const kinds = [];
+      if (moving && (ball.vx * dir.x + ball.vy * dir.y) / bs > 0.3) kinds.push({ kind: 'push', speed: run * tuning.player.dribbleFactor, delay: 0.12 });
+      if (along > 26) kinds.push({ kind: 'long', speed: k.shotSpeed * (0.75 + 0.25 * p.shooting) + run * k.runBonus, delay: 0.2 });
+      // From a trapped ball: soft (arrives slowly) or firm (arrives at about 11 m/s, less time
+      // for an interception; the stick is held a little longer).
+      const turn = Math.acos(Math.max(-1, Math.min(1, p.fx * dir.x + p.fy * dir.y))) / tuning.player.trapTurnRate;
+      for (const arrive of [4 + along * 0.08, 11]) {
+        const need = Math.min(k.passMaxSpeed, Math.max(k.passSpeed, speedForDistance(along, arrive)));
+        const trapDelay = (p.state === 'trap' ? 0 : 0.3) + turn + (lvl.passAim || 0.15) + holdForSpeed(need);
+        kinds.push({ kind: 'trap', speed: need, delay: trapDelay });
+      }
+      // The target must be well inside the pitch.
+      const tx = from.x + dir.x * along, ty = from.y + dir.y * along;
+      if (!inside(tx, ty, 2.5)) continue;
+      for (const kd of kinds) {
+        const c = passChance(world, team, from, dir, kd.speed, along, m, kd.delay);
+        if (!Number.isFinite(c.tArrive)) continue; // the ball would stop before the target
+        // If the receiver misses it, where does the ball end up? Over the own goal line = a
+        // corner (never); over the touchline = a throw-in (risky).
+        const over = Math.min(12, rollDistanceLeft(kd.speed, along));
+        const ex = tx + dir.x * over, ey = ty + dir.y * over;
+        if (!inside(ex, ey, 0) && overOwnLine(team, ey)) continue;
+        const outRisk = inside(ex, ey, 0) ? 0 : 1;
+        let pOk = c.p * (1 - outRisk * 0.25);
+        if (tPress < kd.delay) pOk *= 0.55; // tackled before the ball is away
+        if (kd.kind === 'long') pOk *= 0.75; // a driven ball in the air is harder to control
+        // Worth more when the receiver will have time on the ball.
+        let freeT = 3;
+        for (const o of opp.players) if (!o.sentOff) freeT = Math.min(freeT, reachTime(o, c.x, c.y, 0.2) - c.tArrive - kd.delay);
+        const gain = zoneValue(team, c.x, c.y) + 0.01 * Math.max(0, Math.min(2, freeT));
+        const risk = zoneValue(opp, from.x + dir.x * along * 0.5, from.y + dir.y * along * 0.5);
+        let value = pOk * gain - (1 - pOk) * risk * lw;
+        // Forward thinking: metres gained towards the goal count extra (backwards only if needed).
+        const fwd = (depthOf(team, from.y) - depthOf(team, c.y)) * PITCH.length;
+        value += pOk * (fwd > 0 ? fwd * FORWARD[st.phase] : fwd * (underPressure ? 0.0004 : 0.0015));
+        if (fwd < -15) value -= 0.02; // a long ball backwards gives the attack away (almost never right)
+        if (m === human && value > 0) value *= 1.15;
+        if (t.run && value > 0) value *= 1.2;
+        if (m === p.ai.lastPasser && world.step - (p.ai.lastPassStep || -999) < 120) value -= 0.004;
+        value += (world.rng.next() - 0.5) * 0.02 * (1 - (lvl.vision ?? 0.8));
+        const cand = { to: m, dir, along, kind: kd.kind, speed: kd.speed, value, p: pOk };
+        if (!best || value > best.value) best = cand;
+        if (pOk >= minP && (!safe || value > safe.value)) safe = cand;
+      }
     }
   }
-  ai.dir = bestDribble(p, ball, g, opponents, ai.dir);
+  // Lofted pass (a lob, needs a run-up): over the opponents to where a team-mate gets first.
+  // Wide balls and switches of play get a bonus.
+  if (run > 4 && p.state !== 'trap') {
+    const rdir = { x: p.vx / run, y: p.vy / run };
+    const nearLine = ball.x < 5 || ball.x > PITCH.width - 5;
+    for (const dir of PASS_DIRS) {
+      // Near the touchline no turning for it (the touches on the way go out): only straight on.
+      if (dir.x * rdir.x + dir.y * rdir.y < (nearLine ? 0.95 : 0.7)) continue;
+      for (const lob of LOBS) {
+        const lx = from.x + dir.x * lob.dist, ly = from.y + dir.y * lob.dist;
+        if (!inside(lx, ly, 6)) continue;
+        // Nobody gets there: the ball rolls on. Over the line = risky, over the own line = never.
+        const ex = lx + dir.x * 14, ey = ly + dir.y * 14;
+        if (!inside(ex, ey, 0) && overOwnLine(team, ey)) continue;
+        const rollsOut = !inside(ex, ey, 0);
+        let tR = Infinity, to = null;
+        for (const m of team.players) {
+          if (m === p || m.sentOff || m.role === 'keeper') continue;
+          const t = reachTime(m, lx, ly, 0.15);
+          if (t < tR) { tR = t; to = m; }
+        }
+        let tO = Infinity;
+        for (const o of opp.players) if (!o.sentOff) tO = Math.min(tO, reachTime(o, lx, ly, 0.35));
+        const pOk = sigmoidAI((tO - Math.max(tR, lob.time - 0.2)) / 0.25) * sigmoidAI((lob.time + 0.6 - tR) / 0.2) * (rollsOut ? 0.6 : 0.85);
+        const gain = zoneValue(team, lx, ly);
+        const risk = zoneValue(opp, lx, ly);
+        let value = pOk * gain - (1 - pOk) * risk * lw;
+        const fwd = (depthOf(team, from.y) - depthOf(team, ly)) * PITCH.length;
+        if (fwd > 0) value += pOk * fwd * FORWARD[st.phase];
+        const wide = Math.abs(lx - PITCH.width / 2) > 18 || Math.abs(lx - from.x) > 20;
+        if (wide && fwd > -5) value += pOk * WIDE_BONUS;
+        const cand = { to, dir, along: lob.dist, kind: 'lob', power: lob.power, value, p: pOk };
+        if (!best || value > best.value) best = cand;
+        if (pOk >= minP && (!safe || value > safe.value)) safe = cand;
+      }
+    }
+  }
+  if (best) best.safe = safe;
+  return best;
+}
+
+// Lob distances (landing point) and flight times, measured with the ball physics.
+const LOBS = [{ dist: 24.8, time: 1.84, power: false }, { dist: 43.2, time: 2.24, power: true }];
+// Extra value for a high ball out wide or across the pitch (it opens the play).
+const WIDE_BONUS = 0.012;
+const sigmoidAI = (x) => 1 / (1 + Math.exp(-x));
+
+// The best direction to carry the ball: forward into space, not into an opponent.
+function chooseCarry(p, team, world, st, lvl) {
+  const ball = world.ball;
+  const from = { x: ball.x, y: ball.y };
+  const opp = world.teams[1 - team.id];
+  const lw = lossWeight(st);
+  const riskHere = zoneValue(opp, from.x, from.y);
+  const patience = 1;
+  let best = null;
+  const g = oppGoal(team);
+  const gx = g.x - from.x, gy = g.y - from.y, gd = Math.hypot(gx, gy) || 1;
+  const pressed = contained(p, team, world);
+  for (const d of PASS_DIRS) {
+    const len = 7;
+    const x = from.x + d.x * len, y = from.y + d.y * len;
+    // Stay on the pitch (the ball runs a few metres ahead): only towards the opponent's goal
+    // mouth may the line be crossed.
+    const x10 = from.x + d.x * 10, y10 = from.y + d.y * 10;
+    const towardsGoalMouth = Math.abs(y10 - g.y) < 3 && x10 > GOAL_X0 - 4 && x10 < GOAL_X1 + 4;
+    if (!towardsGoalMouth && (!inside(x, y, 1.5) || !inside(x10, y10, 0))) continue;
+    const pk = carryChance(world, team, p, from, d, len);
+    let value = pk * zoneValue(team, x, y) * patience - (1 - pk) * riskHere * lw;
+    // Drive: towards the opponent's goal. Sideways costs a little, backwards a lot (only under
+    // pressure is it a real option).
+    const forward = (d.x * gx + d.y * gy) / gd;
+    // Never run towards the own goal in the own half.
+    if (forward < -0.3 && depthOf(team, from.y) > 0.5) continue;
+    value += pk * forward * DRIVE;
+    if (forward < -0.3) value -= pressed ? 0.01 : 0.04;
+    // Rhythm: after a couple of seconds on the ball, a player looks to release it.
+    value -= Math.max(0, (p.ai.carryTime || 0) - 1.6) * 0.006;
+    if (p.ai.dir && p.ai.dir.x === d.x && p.ai.dir.y === d.y) value += 0.002;
+    value += (world.rng.next() - 0.5) * 0.015 * (1 - (lvl.vision ?? 0.8));
+    if (!best || value > best.value) best = { dir: d, value, p: pk };
+  }
+  return best;
 }
 
 function wastingTime(team, world) {
@@ -601,16 +1032,45 @@ function bestDribble(p, ball, g, opponents, current) {
 
 // A chip is a lob: run at the ball in the wanted direction and pull the stick back just before
 // the touch (the same move as a human). The ball then goes high in the running direction.
-function executeChip(p, ball, ai) {
+function executeChip(p, ball, ai, team, world) {
   const cfg = tuning.player;
-  const speed = Math.hypot(p.vx, p.vy);
-  const aligned = speed > 0.5 && (p.vx * ai.dir.x + p.vy * ai.dir.y) / speed > 0.9;
-  const d = Math.hypot(ball.x - p.x, ball.y - p.y);
-  if (aligned && speed > tuning.kick.lobMinSpeed + 1 && ball.z < 0.3 && d < cfg.footReach + cfg.touchRadius + 0.35) {
-    const back = toSector(Math.atan2(-ai.dir.y, -ai.dir.x));
-    return { dx: back.dx, dy: back.dy, fire: false, reverse: true };
+  // A clearance under close pressure: no time to set it up.
+  if (ai.plan === 'clear' && team && world) {
+    let near = Infinity;
+    for (const o of world.teams[1 - team.id].players) if (!o.sentOff) near = Math.min(near, Math.hypot(o.x - p.x, o.y - p.y));
+    if (p.state === 'trap' && near < 3.5) {
+      // Release at once with the stick in the clearance direction: the ball is gone (flat).
+      return { dx: Math.sign(Math.round(ai.dir.x * 2)), dy: Math.sign(Math.round(ai.dir.y * 2)), fire: false };
+    }
+    const speed = Math.hypot(p.vx, p.vy);
+    const g = oppGoal(team);
+    const run = speed > 0 ? { x: p.vx / speed, y: p.vy / speed } : null;
+    const towardsGoal = run ? (run.x * (g.x - p.x) + run.y * (g.y - p.y)) / (Math.hypot(g.x - p.x, g.y - p.y) || 1) : -1;
+    const close = Math.hypot(ball.x - p.x, ball.y - p.y) < tuning.kick.shotReach && ball.z < 0.3;
+    if (p.state !== 'trap' && speed > tuning.kick.lobMinSpeed + 0.3 && close && towardsGoal > 0.3 &&
+        (p.shotWindow > 0 || p.touchTimer <= 0)) {
+      // High and long in the running direction (not towards the own goal).
+      const back = toSector(Math.atan2(-p.vy, -p.vx));
+      return { dx: back.dx, dy: back.dy, fire: true, reverse: true };
+    }
   }
-  return drive(p, ball, ai.dir);
+  // Standing on the ball (trap): turn to the direction first, then release with the stick
+  // centred and run (releasing with a direction would be a pass).
+  if (p.state === 'trap') {
+    if (p.fx * ai.dir.x + p.fy * ai.dir.y > 0.9) return { dx: 0, dy: 0, fire: false };
+    return { dx: Math.sign(Math.round(ai.dir.x * 2)), dy: Math.sign(Math.round(ai.dir.y * 2)), fire: true };
+  }
+  const speed = Math.hypot(p.vx, p.vy);
+  // Just after a touch in the wanted direction (the lob window, like a shot): pull back.
+  const aligned = speed > 0.5 && (p.vx * ai.dir.x + p.vy * ai.dir.y) / speed > 0.9;
+  if (aligned && speed > tuning.kick.lobMinSpeed + 0.5 && ball.z < 0.3 && p.shotWindow > 0 &&
+      (ball.vx * ai.dir.x + ball.vy * ai.dir.y) > 0 && Math.hypot(ball.x - p.x, ball.y - p.y) < tuning.kick.shotReach) {
+    // The lob goes where he runs: pull the stick back against the running direction.
+    const back = toSector(Math.atan2(-p.vy, -p.vx));
+    return { dx: back.dx, dy: back.dy, fire: !!ai.chipPower, reverse: true };
+  }
+  // Get into the running direction (no trap on the way: a lob needs a moving player).
+  return { ...drive(p, ball, ai.dir), fire: false };
 }
 
 // Trap, aim, release: the same steps a human uses. mode 'pass' releases fire with the stick
@@ -645,6 +1105,7 @@ function executeTrap(p, lvl, ball, mode) {
   }
   if (mode === 'turn') {
     ai.turning = false;
+    ai.turnCooldown = 0.6;
     return { dx: 0, dy: 0, fire: false };
   }
   ai.plan = null;
@@ -660,13 +1121,28 @@ function drive(p, ball, d) {
     return { dx: Math.sign(Math.round(d.x * 2)), dy: Math.sign(Math.round(d.y * 2)), fire: false };
   }
   const behindX = ball.x - d.x * 0.7, behindY = ball.y - d.y * 0.7;
+  // Close to the ball but not yet facing the wanted way: hold fire, so a contact stops the
+  // ball (a trap, then a turn) instead of pushing it in the wrong direction (often out of play).
   // On the wrong side of the ball: go round it, not through it.
+  let joy;
   if (bx * d.x + by * d.y < 0) {
     const sx = -d.y, sy = d.x;
     const side = (p.x - ball.x) * sx + (p.y - ball.y) * sy >= 0 ? 1 : -1;
-    return steer(p, behindX + sx * side * 1.0, behindY + sy * side * 1.0, 0);
+    joy = steer(p, behindX + sx * side * 1.0, behindY + sy * side * 1.0, 0);
+  } else {
+    joy = steer(p, behindX, behindY, 0);
   }
-  return steer(p, behindX, behindY, 0);
+  // The step (stick) or the run goes clearly another way than wanted, close to the ball: hold
+  // fire, so a touch now stops the ball instead of pushing it that way.
+  const run = Math.hypot(p.vx, p.vy);
+  const sl = Math.hypot(joy.dx, joy.dy) || 1;
+  const stickOff = (joy.dx * d.x + joy.dy * d.y) / sl < 0.3;
+  const runOff = run > 1 && (p.vx * d.x + p.vy * d.y) / run < 0.3;
+  joy.fire = dist < 1.8 && (stickOff || runOff) && p.shotWindow <= 0;
+  // Right after a touch fire would be a shot: if the step would push the ball the wrong way,
+  // wait a moment instead of stepping into it.
+  if (stickOff && dist < 1.2 && p.shotWindow > 0) return { dx: 0, dy: 0, fire: false };
+  return joy;
 }
 
 // Aftertouch for an AI shot: bend the ball towards the chosen corner, dip it under the bar.

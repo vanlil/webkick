@@ -45,7 +45,7 @@ else does.
 | Space held **before** reaching the ball | Trap: the ball stops at your feet |
 | In trap: direction + release Space | Pass in that direction (release with no direction = dribble on). Hold the direction longer for a harder, longer pass: quick = about 20 m, about 1 s = about 45 m. The arrow on your player grows and turns orange with the power |
 | In trap: forward, then back while releasing Space | Flick the ball up |
-| Pull back just as you reach the ball | Lob |
+| Pull back just as you reach the ball (or just after a touch) | Lob. With Space pressed at the same time: a long, high clearance |
 | Right after any kick: arrow sideways / diagonal forward | Aftertouch: bend the ball |
 | Right after any kick: arrow forward | Aftertouch: make the ball dip |
 | Space with the ball in the air nearby | Jump for a header (arrow = header direction) |

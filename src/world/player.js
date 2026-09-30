@@ -70,15 +70,21 @@ function stepRun(p, joy, dir, world) {
   const speed = playerSpeed(p);
   const moveDir = speed > 0.5 ? { x: p.vx / speed, y: p.vy / speed } : null;
 
-  // Stick pulled against the running direction, just as the ball is reached: lob or
-  // overhead kick. Checked before moving, because moving turns the player round.
+  // Stick pulled against the running direction, just as the ball is reached: lob (with fire:
+  // a long clearance) or overhead kick. Checked before moving, because moving turns the player round.
   // `noReverse`: the AI sets it so a change of direction is never read as a lob.
-  if (!joy.noReverse && dir && moveDir && dot(dir, moveDir) < REVERSED && p.touchTimer <= 0 && canTouch(p, ball, world)) {
+  // Like a shot, a lob also works just after a touch (in the shot window), while the ball is
+  // still close: then it goes in the direction of that touch.
+  const lobWindow = p.shotWindow > 0 && canTouch(p, ball, world);
+  if (!joy.noReverse && dir && moveDir && dot(dir, moveDir) < REVERSED && (p.touchTimer <= 0 || lobWindow) && canTouch(p, ball, world)) {
     const fx = p.x + moveDir.x * cfg.footReach;
     const fy = p.y + moveDir.y * cfg.footReach;
     const d = Math.hypot(ball.x - fx, ball.y - fy);
-    if (!isAirborne(ball) && speed > tuning.kick.lobMinSpeed && d < cfg.touchRadius) {
-      kick(p, ball, moveDir, tuning.kick.lobSpeed, tuning.kick.lobLift, p.passing, world, 'lob');
+    if (!isAirborne(ball) && speed > tuning.kick.lobMinSpeed && (d < cfg.touchRadius || (lobWindow && d < tuning.kick.shotReach))) {
+      // With fire pressed at the same time: a long, high clearance instead of a lob.
+      const k = tuning.kick;
+      if (joy.fire) kick(p, ball, moveDir, k.clearSpeed, k.clearLift, p.passing, world, 'clearance');
+      else kick(p, ball, moveDir, k.lobSpeed, k.lobLift, p.passing, world, 'lob');
       return;
     }
     if (ball.z > 0.6 && ball.z < 2.2 && d < 1.0) {

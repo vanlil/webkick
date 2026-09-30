@@ -184,17 +184,39 @@ function cpuTake(world, sp, team) {
   } else if (sp.type === 'corner') {
     cornerKick(world, sp, team, Math.round(rng.range(4, 8)), rng.range(0.5, 1.1), rng.range(-0.2, 0.2));
   } else {
-    // Throw to the nearest free team-mate.
+    // Throw to a free team-mate 4–18 m away (rather forward), landing just in front of him:
+    // a throw to a marked player only gives the opponent a header.
     const { ball } = world;
-    let best = null, bestD = Infinity;
+    const opponents = world.teams[1 - team.id].players.filter((o) => !o.sentOff);
+    let best = null, bestScore = -Infinity;
     for (const p of team.players) {
       if (p.role === 'keeper' || p === sp.taker || p.sentOff) continue;
       const d = Math.hypot(p.x - ball.x, p.y - ball.y);
-      if (d > 3 && d < bestD) { bestD = d; best = p; }
+      if (d < 4 || d > 18) continue;
+      let free = 10;
+      for (const o of opponents) free = Math.min(free, Math.hypot(o.x - p.x, o.y - p.y));
+      // Rather forward (towards the opponent's goal); backwards only to a very free player.
+      const forward = (p.y - ball.y) * (team.attackDir < 0 ? -1 : 1);
+      const score = forward >= 0
+        ? Math.min(free, 8) + forward * 0.35 - Math.abs(d - 11) * 0.1
+        : (free > 7 ? Math.min(free, 8) - 3 + forward * 0.1 : -10 + free);
+      if (score > bestScore) { bestScore = score; best = p; }
     }
-    const target = best || { x: PITCH.width / 2, y: ball.y };
+    if (!best) {
+      let bestD = Infinity;
+      for (const p of team.players) {
+        if (p.role === 'keeper' || p === sp.taker || p.sentOff) continue;
+        const d = Math.hypot(p.x - ball.x, p.y - ball.y);
+        if (d > 3 && d < bestD) { bestD = d; best = p; }
+      }
+    }
+    const aim = best || { x: PITCH.width / 2, y: ball.y };
+    const ad = Math.hypot(aim.x - ball.x, aim.y - ball.y) || 1;
+    // Land about 1.8 m in front of him, flat: he takes it low with the foot. (A throw that
+    // arrives at chest height while he moves bounces off him, often out of play.)
+    const target = { x: aim.x - ((aim.x - ball.x) / ad) * 1.8, y: aim.y - ((aim.y - ball.y) / ad) * 1.8 };
     const d = Math.hypot(target.x - ball.x, target.y - ball.y) || 1;
-    const vh = Math.min(14, Math.max(6, d * 1.1));
+    const vh = Math.min(15, Math.max(8, d * 1.3));
     const T = d / vh;
     const vz = (0.5 * tuning.ball.gravity * T * T - ball.z) / T;
     launchBall(sp.taker, ball, ((target.x - ball.x) / d) * vh, ((target.y - ball.y) / d) * vh, vz, world, 'throwin', false);

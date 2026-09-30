@@ -45,10 +45,15 @@ const PITCH_TYPES = {
 // (s); decision: time between decisions on the ball (s); aftertouch: chance to bend a shot;
 // chasers: players going for the ball (2 = one presses the carrier); slide: willingness to
 // make sliding tackles; tackleSense: how well it avoids tackles from behind (fouls).
+// Team play: vision = chance to see a team-mate as a pass option; support = team-mates moving
+// onto the carrier's pass lanes; runs = chance of a run in behind; marking = picking up forwards
+// near the own goal; counterPress = two players hunt the ball right after losing it;
+// pressTriggers = a second player presses on triggers (back to goal, touchline, trapped ball);
+// containDist / containTime = how close a defender stands off the carrier, and for how long.
 export const AI_LEVELS = {
-  easy:   { reaction: 0.40, decision: 0.45, shootRange: 17, aftertouch: 0.0, passAim: 0.25, chasers: 1, headers: false, keeperReaction: 0.32, slide: 0.4, tackleSense: 0.3, chip: 0.2 },
-  medium: { reaction: 0.22, decision: 0.28, shootRange: 22, aftertouch: 0.5, passAim: 0.15, chasers: 2, headers: true,  keeperReaction: 0.22, slide: 0.7, tackleSense: 0.6, chip: 0.5 },
-  hard:   { reaction: 0.10, decision: 0.15, shootRange: 27, aftertouch: 1.0, passAim: 0.08, chasers: 2, headers: true,  keeperReaction: 0.14, slide: 1.0, tackleSense: 0.85, chip: 0.9 },
+  easy:   { reaction: 0.40, decision: 0.45, shootRange: 17, aftertouch: 0.0, passAim: 0.25, chasers: 1, headers: false, keeperReaction: 0.32, slide: 0.4, tackleSense: 0.3, chip: 0.2, vision: 0.6, support: 1, runs: 0.3, marking: 0.4, counterPress: false, pressTriggers: false, containDist: 2.0, containTime: 1.0 },
+  medium: { reaction: 0.22, decision: 0.28, shootRange: 22, aftertouch: 0.5, passAim: 0.15, chasers: 2, headers: true,  keeperReaction: 0.22, slide: 0.7, tackleSense: 0.6, chip: 0.5, vision: 0.8, support: 2, runs: 0.6, marking: 0.7, counterPress: true, pressTriggers: false, containDist: 1.8, containTime: 0.7 },
+  hard:   { reaction: 0.10, decision: 0.15, shootRange: 27, aftertouch: 1.0, passAim: 0.08, chasers: 2, headers: true,  keeperReaction: 0.14, slide: 1.0, tackleSense: 0.85, chip: 0.9, vision: 0.95, support: 2, runs: 0.9, marking: 0.9, counterPress: true, pressTriggers: true, containDist: 1.5, containTime: 0.5 },
 };
 
 // Team strength (the players' attributes), per team, as in the classic's divisions.
@@ -151,6 +156,8 @@ export const DEFAULTS = {
     lobSpeed: 15,
     lobLift: 9,
     lobMinSpeed: 2,       // player must run at least this fast to lob
+    clearSpeed: 22,       // lob with fire pressed at the same time: long, high clearance
+    clearLift: 11,
     flickLift: 5.5,
     maxError: 0.12,       // max direction error (radians) for skill 0
     aftertouchTime: 0.45, // seconds after a kick in which the stick bends the ball
